@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import '../../../features/listing/pages/listing_detail_page.dart';
 import '../../../models/listing.dart';
 import '../../theme/de_colors.dart';
 import '../../theme/de_radius.dart';
@@ -14,7 +14,16 @@ class DECompactListingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap:
+          onTap ??
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ListingDetailPage(listing: listing),
+              ),
+            );
+          },
       child: Container(
         width: 220,
         margin: const EdgeInsets.only(right: DESpacing.md),

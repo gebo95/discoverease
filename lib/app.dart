@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'features/home/pages/home_page.dart';
+import 'features/main_shell/pages/main_shell_page.dart';
 import 'shared/theme/de_theme.dart';
 
 class DiscoverEaseApp extends StatelessWidget {
@@ -12,7 +12,7 @@ class DiscoverEaseApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'DiscoverEase',
       theme: DETheme.lightTheme,
-      home: const HomePage(),
+      home: const MainShellPage(),
     );
   }
 }

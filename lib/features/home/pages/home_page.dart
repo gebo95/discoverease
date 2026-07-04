@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../../shared/components/cards/de_listing_card.dart';
+import '../../../shared/components/inputs/de_search_bar.dart';
 import '../../../shared/components/navigation/de_app_bar.dart';
+import '../widgets/home_header.dart';
 import '../widgets/live_now_section.dart';
+import '../widgets/featured_section.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -13,77 +15,87 @@ class HomePage extends StatelessWidget {
       appBar: const DEAppBar(destination: "Bahamas", location: "Nassau"),
       body: ListView(
         padding: const EdgeInsets.all(20),
+        children: const [
+          HomeHeader(),
+
+          SizedBox(height: 18),
+
+          DESearchBar(),
+
+          SizedBox(height: 26),
+
+          FeaturedSection(),
+
+          SizedBox(height: 28),
+
+          LiveNowSection(),
+
+          SizedBox(height: 28),
+
+          _SectionTitle(title: "🍽 Top Dining"),
+
+          SizedBox(height: 120),
+
+          _SectionTitle(title: "🚤 Adventures"),
+
+          SizedBox(height: 120),
+
+          _SectionTitle(title: "🏝 Hidden Gems"),
+
+          SizedBox(height: 120),
+
+          _ContinuePlanningCard(),
+
+          SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String title;
+
+  const _SectionTitle({required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      title,
+      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+    );
+  }
+}
+
+class _ContinuePlanningCard extends StatelessWidget {
+  const _ContinuePlanningCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 10),
-
-          const Text(
-            "Find your next adventure",
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+          Text(
+            "📌 Continue Planning",
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           ),
-
-          const SizedBox(height: 12),
-
-          const TextField(
-            decoration: InputDecoration(
-              hintText: "Search restaurants, tours, festivals...",
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-              ),
-            ),
+          SizedBox(height: 12),
+          Text(
+            "Bahamas Trip",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
-
-          const SizedBox(height: 30),
-
-          const Text(
-            "⭐ Featured Experiences",
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 150),
-
-          const LiveNowSection(),
-
-          const SizedBox(height: 150),
-
-          const Text(
-            "🍽 Categories",
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 150),
-
-          const Text(
-            "🏝 Listings",
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 16),
-
-          DEListingCard(
-            title: "Graycliff Restaurant",
-            subtitle: "Historic Bahamian fine dining",
-            category: "🍽 Restaurant",
-            location: "Nassau",
-            imageUrl:
-                "https://images.unsplash.com/photo-1555396273-367ea4eb4db5",
-            rating: 4.9,
-            price: r"$$$",
-            status: "OPEN NOW",
-            pulse: "Live Jazz Tonight",
-          ),
-
-          DEListingCard(
-            title: "Exuma Swimming Pigs Tour",
-            subtitle: "A once-in-a-lifetime island adventure",
-            category: "🚤 Tour",
-            location: "Exuma",
-            imageUrl:
-                "https://images.unsplash.com/photo-1507525428034-b723cf961d3e",
-            rating: 4.8,
-            price: r"$$",
-            status: "BOOKING",
-            pulse: "Few spots left today",
+          SizedBox(height: 6),
+          Text("8 places saved • Estimated budget \$1,450"),
+          SizedBox(height: 12),
+          Text(
+            "Day 2 still needs lunch",
+            style: TextStyle(fontWeight: FontWeight.w600),
           ),
         ],
       ),
