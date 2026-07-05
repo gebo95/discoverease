@@ -1,4 +1,4 @@
-import '../models/featured_experience.dart';
+import '../../models/featured_experience.dart';
 
 const featuredExperiences = [
   FeaturedExperience(

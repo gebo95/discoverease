@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../mock_data/live_now.dart';
+import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/cards/de_compact_listing_card.dart';
 
 class LiveNowSection extends StatelessWidget {
@@ -8,6 +8,9 @@ class LiveNowSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const listingRepository = ListingRepository();
+    final listings = listingRepository.getLiveNow();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -26,9 +29,9 @@ class LiveNowSection extends StatelessWidget {
           height: 270,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: liveNowListings.length,
+            itemCount: listings.length,
             itemBuilder: (context, index) {
-              return DECompactListingCard(listing: liveNowListings[index]);
+              return DECompactListingCard(listing: listings[index]);
             },
           ),
         ),

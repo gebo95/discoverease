@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../mock_data/live_now.dart';
+import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/cards/de_listing_card.dart';
 import '../../../shared/components/inputs/de_search_bar.dart';
 import '../../../shared/theme/de_colors.dart';
@@ -11,7 +11,8 @@ class ExplorePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final listings = liveNowListings;
+    const listingRepository = ListingRepository();
+    final listings = listingRepository.getLiveNow();
 
     return Scaffold(
       backgroundColor: DEColors.background,

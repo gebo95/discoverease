@@ -4,6 +4,7 @@ import '../../home/pages/home_page.dart';
 import '../../saved/pages/saved_page.dart';
 import '../../../shared/theme/de_colors.dart';
 import '../../explore/pages/explore_page.dart';
+import '../../trips/pages/trips_page.dart';
 
 class MainShellPage extends StatefulWidget {
   const MainShellPage({super.key});
@@ -19,7 +20,7 @@ class _MainShellPageState extends State<MainShellPage> {
     HomePage(),
     ExplorePage(),
     SavedPage(),
-    SizedBox(child: Center(child: Text("Trips"))),
+    TripsPage(),
     SizedBox(child: Center(child: Text("Profile"))),
   ];
 

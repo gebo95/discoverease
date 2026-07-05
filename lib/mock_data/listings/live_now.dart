@@ -1,4 +1,4 @@
-import '../models/listing.dart';
+import '../../models/listing.dart';
 
 const liveNowListings = [
   Listing(
