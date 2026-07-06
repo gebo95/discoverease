@@ -1,3 +1,5 @@
+import 'trip_day.dart';
+
 class Trip {
   final String id;
   final String title;
@@ -15,19 +17,5 @@ class Trip {
     this.endDate,
     this.days = const [],
     this.estimatedBudget = 0,
-  });
-}
-
-class TripDay {
-  final String title;
-  final List<String> morningListingIds;
-  final List<String> afternoonListingIds;
-  final List<String> eveningListingIds;
-
-  const TripDay({
-    required this.title,
-    this.morningListingIds = const [],
-    this.afternoonListingIds = const [],
-    this.eveningListingIds = const [],
   });
 }

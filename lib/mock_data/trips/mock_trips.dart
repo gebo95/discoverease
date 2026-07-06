@@ -1,5 +1,9 @@
 import '../../models/trip.dart';
 
+import '../../models/trip_day.dart';
+import '../../models/trip_experience.dart';
+import '../../models/trip_section.dart';
+
 const currentTrip = Trip(
   id: "bahamas-adventure",
   title: "Bahamas Adventure",
@@ -8,13 +12,26 @@ const currentTrip = Trip(
   days: [
     TripDay(
       title: "Day 1",
-      morningListingIds: ["arawak-cay-fish-fry"],
-      afternoonListingIds: ["sunset-cruise"],
-      eveningListingIds: ["sandy-toes-beach-bar"],
+      experiences: [
+        TripExperience(
+          id: "trip-exp-1",
+          listingId: "arawak-cay-fish-fry",
+          section: TripSection.morning,
+        ),
+        TripExperience(
+          id: "trip-exp-2",
+          listingId: "sunset-cruise",
+          section: TripSection.afternoon,
+        ),
+        TripExperience(
+          id: "trip-exp-3",
+          listingId: "sandy-toes-beach-bar",
+          section: TripSection.evening,
+        ),
+      ],
     ),
   ],
 );
-
 const upcomingTrip = Trip(
   id: "tokyo-2027",
   title: "Tokyo Adventure",
