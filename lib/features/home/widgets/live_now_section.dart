@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/cards/de_compact_listing_card.dart';
+import 'package:provider/provider.dart';
 
 class LiveNowSection extends StatelessWidget {
   const LiveNowSection({super.key});
 
   @override
   Widget build(BuildContext context) {
-    const listingRepository = ListingRepository();
+    final listingRepository = context.read<ListingRepository>();
     final listings = listingRepository.getLiveNow();
 
     return Column(

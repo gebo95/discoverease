@@ -4,13 +4,16 @@ import '../../../models/trip.dart';
 import '../../../models/trip_section.dart';
 import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/cards/de_trip_experience_card.dart';
+import '../../../repositories/trip_repository.dart';
 import '../../../shared/components/cards/de_on_my_list_card.dart';
 import '../../../shared/components/sections/de_day_section.dart';
+import '../../../shared/components/bottom_sheets/de_plan_experience_sheet.dart';
 import '../../../repositories/saved_repository.dart';
 import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_spacing.dart';
 import '../../../shared/components/bottom_sheets/de_on_my_list_actions_sheet.dart';
 import '../../../shared/components/feedback/de_toast.dart';
+import 'package:provider/provider.dart';
 
 class TripDashboardPage extends StatefulWidget {
   final Trip trip;
@@ -26,13 +29,17 @@ class _TripDashboardPageState extends State<TripDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final listingRepository = ListingRepository();
-    final savedRepository = SavedRepository();
+    final listingRepository = context.read<ListingRepository>();
+    final savedRepository = context.read<SavedRepository>();
+    final tripRepository = context.watch<TripRepository>();
+    final trip = tripRepository.getCurrentTrip();
 
-    final savedExperiences = savedRepository.getSavedForDestination(
-      widget.trip.destination,
-    );
-    final selectedDay = widget.trip.days[selectedDayIndex];
+    final savedExperiences = savedRepository
+        .getSavedForDestination(trip.destination)
+        .where((saved) => !tripRepository.isListingPlanned(saved.listingId))
+        .toList();
+
+    final selectedDay = trip.days[selectedDayIndex];
 
     final morning = selectedDay.experiences
         .where((e) => e.section == TripSection.morning)
@@ -59,14 +66,14 @@ class _TripDashboardPageState extends State<TripDashboardPage> {
             ),
 
             Text(
-              widget.trip.title,
+              trip.title,
               style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900),
             ),
 
             const SizedBox(height: 6),
 
             Text(
-              "${widget.trip.destination} • 2 travelers",
+              "${trip.destination} • 2 travelers",
               style: const TextStyle(
                 color: DEColors.textSecondary,
                 fontSize: 15,
@@ -79,7 +86,7 @@ class _TripDashboardPageState extends State<TripDashboardPage> {
               height: 44,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
-                itemCount: widget.trip.days.length,
+                itemCount: trip.days.length,
                 itemBuilder: (context, index) {
                   final isSelected = selectedDayIndex == index;
 
@@ -100,7 +107,7 @@ class _TripDashboardPageState extends State<TripDashboardPage> {
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
-                        widget.trip.days[index].title,
+                        trip.days[index].title,
                         style: TextStyle(
                           color: isSelected
                               ? Colors.white
@@ -205,10 +212,24 @@ class _TripDashboardPageState extends State<TripDashboardPage> {
                           );
                         },
                         onPlanExperience: () {
-                          showDEToast(
+                          showDEPlanExperienceSheet(
                             context,
-                            title: "Plan Experience",
-                            message: "Planning flow coming next",
+                            experienceTitle: listing.title,
+                            days: trip.days.map((day) => day.title).toList(),
+                            onPlan: (dayIndex, section) {
+                              tripRepository.planExperience(
+                                listingId: listing.id,
+                                dayIndex: dayIndex,
+                                section: section,
+                              );
+
+                              showDEToast(
+                                context,
+                                title: "Planned!",
+                                message:
+                                    "${listing.title} planned for ${trip.days[dayIndex].title}.",
+                              );
+                            },
                           );
                         },
                         onRemove: () {

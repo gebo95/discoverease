@@ -67,4 +67,26 @@ const liveNowListings = [
     features: ["Local Favorite", "Outdoor Seating", "Casual"],
     pulse: "Happy hour tonight",
   ),
+  Listing(
+    id: "bahmar",
+    title: "bahmar",
+    subtitle: "Boarding soon",
+    category: "🚤 Tour",
+    subcategory: "Boat Tour",
+    destination: "Bahamas",
+    location: "Paradise Island",
+    imageUrl: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee",
+    gallery: [],
+    rating: 4.8,
+    reviewCount: 94,
+    price: r"$$$",
+    status: "STARTS SOON",
+    description:
+        "A scenic evening cruise with ocean views, music, and sunset photo moments.",
+    whyYoullLoveIt:
+        "A beautiful way to end the day on the water with friends or family.",
+    perfectFor: ["Couples", "Friends", "Sunset"],
+    features: ["Ocean View", "Photo Friendly", "Guided Experience"],
+    pulse: "Leaves in 45 mins",
+  ),
 ];

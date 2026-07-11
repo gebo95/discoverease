@@ -5,14 +5,28 @@ import '../../../shared/components/cards/de_listing_card.dart';
 import '../../../shared/components/inputs/de_search_bar.dart';
 import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_spacing.dart';
+import 'package:provider/provider.dart';
+import '../../../shared/components/chips/de_filter_chip.dart';
 
-class ExplorePage extends StatelessWidget {
+class ExplorePage extends StatefulWidget {
   const ExplorePage({super.key});
 
   @override
+  State<ExplorePage> createState() => _ExplorePageState();
+}
+
+class _ExplorePageState extends State<ExplorePage> {
+  String? selectedFilter;
+
+  String searchQuery = "";
+
+  @override
   Widget build(BuildContext context) {
-    const listingRepository = ListingRepository();
-    final listings = listingRepository.getLiveNow();
+    final listingRepository = context.read<ListingRepository>();
+    final listings = listingRepository.searchListings(
+      searchQuery,
+      filter: selectedFilter,
+    );
 
     return Scaffold(
       backgroundColor: DEColors.background,
@@ -40,7 +54,14 @@ class ExplorePage extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            const DESearchBar(hintText: "Search food, tours, beaches..."),
+            DESearchBar(
+              hintText: "Search places, food, tours...",
+              onChanged: (value) {
+                setState(() {
+                  searchQuery = value;
+                });
+              },
+            ),
 
             const SizedBox(height: 22),
 
@@ -50,22 +71,20 @@ class ExplorePage extends StatelessWidget {
             ),
 
             const SizedBox(height: 14),
-
             Wrap(
               spacing: 10,
               runSpacing: 10,
-              children: const [
-                _ExploreChip(label: "❤️ Romantic"),
-                _ExploreChip(label: "🍽 Hungry"),
-                _ExploreChip(label: "🎵 Live Music"),
-                _ExploreChip(label: "🏖 Beach"),
-                _ExploreChip(label: "👨‍👩‍👧 Family"),
-                _ExploreChip(label: "✨ Hidden Gems"),
-                _ExploreChip(label: "🌅 Sunset"),
-                _ExploreChip(label: "💰 Budget"),
+              children: [
+                _buildFilterChip("❤️ Romantic"),
+                _buildFilterChip("🍽 Hungry"),
+                _buildFilterChip("🎵 Live Music"),
+                _buildFilterChip("🏖 Beach"),
+                _buildFilterChip("👨‍👩‍👧 Family"),
+                _buildFilterChip("✨ Hidden Gems"),
+                _buildFilterChip("🌅 Sunset"),
+                _buildFilterChip("💰 Budget"),
               ],
             ),
-
             const SizedBox(height: 28),
 
             const Text(
@@ -75,47 +94,71 @@ class ExplorePage extends StatelessWidget {
 
             const SizedBox(height: 16),
 
-            ...listings.map(
-              (listing) => DEListingCard(
-                title: listing.title,
-                subtitle: listing.subtitle,
-                category: listing.category,
-                location: listing.location,
-                imageUrl: listing.imageUrl,
-                rating: listing.rating,
-                price: listing.price,
-                status: listing.status,
-                pulse: listing.pulse,
+            if (listings.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(
+                  children: [
+                    const Icon(
+                      Icons.search_off_rounded,
+                      size: 46,
+                      color: DEColors.textSecondary,
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      "No experiences found",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      "Try another search or choose a different mood.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: DEColors.textSecondary),
+                    ),
+                    if (selectedFilter != null)
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            selectedFilter = null;
+                          });
+                        },
+                        child: const Text("Clear filter"),
+                      ),
+                  ],
+                ),
+              )
+            else
+              ...listings.map(
+                (listing) => DEListingCard(
+                  title: listing.title,
+                  subtitle: listing.subtitle,
+                  category: listing.category,
+                  location: listing.location,
+                  imageUrl: listing.imageUrl,
+                  rating: listing.rating,
+                  price: listing.price,
+                  status: listing.status,
+                  pulse: listing.pulse,
+                ),
               ),
-            ),
           ],
         ),
       ),
     );
   }
-}
 
-class _ExploreChip extends StatelessWidget {
-  final String label;
-
-  const _ExploreChip({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: DEColors.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: DEColors.border),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontWeight: FontWeight.w700,
-          color: DEColors.textPrimary,
-        ),
-      ),
+  Widget _buildFilterChip(String label) {
+    return DEFilterChip(
+      label: label,
+      selected: selectedFilter == label,
+      onTap: () {
+        setState(() {
+          selectedFilter = selectedFilter == label ? null : label;
+        });
+      },
     );
   }
 }

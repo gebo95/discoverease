@@ -20,7 +20,7 @@ class HomePage extends StatelessWidget {
 
           SizedBox(height: 18),
 
-          DESearchBar(),
+          DESearchBar(hintText: "Search places, food, tours..."),
 
           SizedBox(height: 26),
 

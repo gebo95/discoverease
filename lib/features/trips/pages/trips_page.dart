@@ -5,13 +5,14 @@ import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_radius.dart';
 import '../../../shared/theme/de_spacing.dart';
 import 'trip_dashboard_page.dart';
+import 'package:provider/provider.dart';
 
 class TripsPage extends StatelessWidget {
   const TripsPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final tripRepository = TripRepository();
+    final tripRepository = context.read<TripRepository>();
 
     final currentTrip = tripRepository.getCurrentTrip();
     final upcomingTrips = tripRepository.getUpcomingTrips();
