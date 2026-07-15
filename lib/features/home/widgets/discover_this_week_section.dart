@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../models/listing.dart';
+import '../../../repositories/destination_repository.dart';
 import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/sections/de_section_header.dart';
 import '../../../shared/theme/de_colors.dart';
@@ -33,15 +35,22 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
     );
   }
 
+  List<Listing> _getCurrentListings() {
+    final listingRepository = context.read<ListingRepository>();
+    final destinationRepository = context.read<DestinationRepository>();
+    final destination = destinationRepository.currentDestination;
+
+    return listingRepository.getForDestination(destination.country);
+  }
+
   void _advanceCarousel() {
     if (!_pageController.hasClients) {
       return;
     }
 
-    final listingRepository = context.read<ListingRepository>();
-    final listings = listingRepository.getLiveNow();
+    final listings = _getCurrentListings();
 
-    if (listings.isEmpty) {
+    if (listings.length <= 1) {
       return;
     }
 
@@ -63,11 +72,26 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
 
   @override
   Widget build(BuildContext context) {
+    final destination = context
+        .watch<DestinationRepository>()
+        .currentDestination;
+
     final listingRepository = context.read<ListingRepository>();
-    final listings = listingRepository.getLiveNow();
+
+    final listings = listingRepository.getForDestination(destination.country);
 
     if (listings.isEmpty) {
       return const SizedBox.shrink();
+    }
+
+    if (_currentPage >= listings.length) {
+      _currentPage = 0;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pageController.hasClients) {
+          _pageController.jumpToPage(0);
+        }
+      });
     }
 
     return Column(
@@ -75,13 +99,13 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
       children: [
         DESectionHeader(
           title: "✨ Discover This Week",
-          subtitle: "Handpicked experiences worth checking out.",
+          subtitle:
+              "Handpicked experiences in ${destination.name} worth checking out.",
           actionText: "Explore →",
           onAction: () {
-            // Later: open Explore with featured results.
+            // Later: open Explore for the current destination.
           },
         ),
-
         SizedBox(
           height: 340,
           child: PageView.builder(
@@ -98,17 +122,8 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
               return Padding(
                 padding: const EdgeInsets.only(right: DESpacing.sm),
                 child: _HeroExperienceCard(
-                  title: listing.title,
-                  subtitle: listing.subtitle,
-                  location: listing.location,
-                  imageUrl: listing.imageUrl,
-                  rating: listing.rating,
-                  price: listing.price,
-                  badge: index == 0
-                      ? "✨ Handpicked"
-                      : index == 1
-                      ? "🌅 Best at Sunset"
-                      : "🔥 Worth Discovering",
+                  listing: listing,
+                  badge: _badgeFor(index),
                   onTap: () {
                     // Later: open Listing Detail.
                   },
@@ -117,9 +132,7 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
             },
           ),
         ),
-
         const SizedBox(height: DESpacing.md),
-
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(listings.length, (index) {
@@ -140,25 +153,26 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
       ],
     );
   }
+
+  String _badgeFor(int index) {
+    switch (index % 3) {
+      case 0:
+        return "✨ Handpicked";
+      case 1:
+        return "🌅 Best This Week";
+      default:
+        return "🔥 Worth Discovering";
+    }
+  }
 }
 
 class _HeroExperienceCard extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String location;
-  final String imageUrl;
-  final double rating;
-  final String price;
+  final Listing listing;
   final String badge;
   final VoidCallback? onTap;
 
   const _HeroExperienceCard({
-    required this.title,
-    required this.subtitle,
-    required this.location,
-    required this.imageUrl,
-    required this.rating,
-    required this.price,
+    required this.listing,
     required this.badge,
     this.onTap,
   });
@@ -172,122 +186,115 @@ class _HeroExperienceCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(DERadius.extraLarge),
           image: DecorationImage(
-            image: NetworkImage(imageUrl),
+            image: NetworkImage(listing.imageUrl),
             fit: BoxFit.cover,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.14),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
+              color: Colors.black.withValues(alpha: 0.10),
+              blurRadius: 28,
+              spreadRadius: -4,
+              offset: const Offset(0, 12),
             ),
           ],
         ),
-        child: Container(
-          padding: const EdgeInsets.all(DESpacing.lg),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(DERadius.extraLarge),
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: const [0.35, 1],
-              colors: [
-                Colors.transparent,
-                Colors.black.withValues(alpha: 0.72),
-              ],
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(DERadius.extraLarge),
+          child: Container(
+            padding: const EdgeInsets.all(DESpacing.lg),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: const [0.35, 1],
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withValues(alpha: 0.64),
+                ],
+              ),
             ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Align(
-                alignment: Alignment.topLeft,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: DEColors.primary,
-                    borderRadius: BorderRadius.circular(DERadius.pill),
-                  ),
-                  child: Text(
-                    badge,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Align(
+                  alignment: Alignment.topLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
                     ),
-                  ),
-                ),
-              ),
-
-              const Spacer(),
-
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  height: 1.05,
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              Text(
-                subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.84),
-                  fontSize: 15,
-                ),
-              ),
-
-              const SizedBox(height: 14),
-
-              Row(
-                children: [
-                  const Icon(Icons.star_rounded, color: Colors.amber, size: 19),
-                  const SizedBox(width: 4),
-                  Text(
-                    rating.toStringAsFixed(1),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
+                    decoration: BoxDecoration(
+                      color: DEColors.primary,
+                      borderRadius: BorderRadius.circular(DERadius.pill),
                     ),
-                  ),
-                  const SizedBox(width: 14),
-                  Text(
-                    price,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  const Icon(
-                    Icons.location_on_rounded,
-                    color: Colors.white,
-                    size: 17,
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
                     child: Text(
-                      location,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.84),
+                      badge,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                   ),
-                ],
-              ),
-            ],
+                ),
+                const Spacer(),
+                Text(
+                  listing.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                    height: 1.05,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  listing.subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.84),
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      color: Colors.amber,
+                      size: 19,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      listing.rating.toStringAsFixed(1),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Spacer(),
+                    const Icon(
+                      Icons.location_on_rounded,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        listing.location,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.84),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

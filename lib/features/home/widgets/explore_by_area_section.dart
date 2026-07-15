@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../../repositories/destination_repository.dart';
 import '../../../shared/components/sections/de_section_header.dart';
 import '../../../shared/theme/de_radius.dart';
 import '../../../shared/theme/de_spacing.dart';
@@ -7,27 +9,16 @@ import '../../../shared/theme/de_spacing.dart';
 class ExploreByAreaSection extends StatelessWidget {
   const ExploreByAreaSection({super.key});
 
-  static const _areas = [
-    _AreaData(
-      name: "Nassau",
-      imageUrl: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e",
-    ),
-    _AreaData(
-      name: "Paradise Island",
-      imageUrl: "https://images.unsplash.com/photo-1544550285-f813152fb2fd",
-    ),
-    _AreaData(
-      name: "Exuma",
-      imageUrl: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee",
-    ),
-    _AreaData(
-      name: "Harbour Island",
-      imageUrl: "https://images.unsplash.com/photo-1473116763249-2faaef81ccda",
-    ),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final destinationRepository = context.watch<DestinationRepository>();
+
+    final areas = destinationRepository.getAreasForCurrentDestination();
+
+    if (areas.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -43,9 +34,9 @@ class ExploreByAreaSection extends StatelessWidget {
           height: 150,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: _areas.length,
+            itemCount: areas.length,
             itemBuilder: (context, index) {
-              final area = _areas[index];
+              final area = areas[index];
 
               return _AreaCard(
                 name: area.name,
@@ -131,11 +122,4 @@ class _AreaCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _AreaData {
-  final String name;
-  final String imageUrl;
-
-  const _AreaData({required this.name, required this.imageUrl});
 }

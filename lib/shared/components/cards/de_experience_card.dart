@@ -3,30 +3,17 @@ import 'package:flutter/material.dart';
 import '../../theme/de_colors.dart';
 import '../../theme/de_radius.dart';
 import '../../theme/de_spacing.dart';
+import '../../../models/listing.dart';
 
 class DEExperienceCard extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String location;
-  final String imageUrl;
-  final double rating;
-  final String price;
-  final String? badge;
-  final String? status;
+  final Listing listing;
   final bool isSaved;
   final VoidCallback? onTap;
   final VoidCallback? onSave;
 
   const DEExperienceCard({
     super.key,
-    required this.title,
-    required this.subtitle,
-    required this.location,
-    required this.imageUrl,
-    required this.rating,
-    required this.price,
-    this.badge,
-    this.status,
+    required this.listing,
     this.isSaved = false,
     this.onTap,
     this.onSave,
@@ -51,7 +38,7 @@ class DEExperienceCard extends StatelessWidget {
             ),
           ],
           image: DecorationImage(
-            image: NetworkImage(imageUrl),
+            image: NetworkImage(listing.imageUrl),
             fit: BoxFit.cover,
           ),
         ),
@@ -81,8 +68,11 @@ class DEExperienceCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (badge != null)
-                    _Badge(label: badge!, backgroundColor: DEColors.primary),
+                  if (listing.category.isNotEmpty)
+                    _Badge(
+                      label: listing.category,
+                      backgroundColor: DEColors.primary,
+                    ),
                   const Spacer(),
                   Material(
                     color: Colors.black.withValues(alpha: 0.28),
@@ -101,12 +91,12 @@ class DEExperienceCard extends StatelessWidget {
               ),
             ),
 
-            if (status != null)
+            if (listing.status.isNotEmpty)
               Positioned(
                 left: 12,
                 bottom: 122,
                 child: _Badge(
-                  label: status!,
+                  label: listing.status,
                   backgroundColor: DEColors.success,
                 ),
               ),
@@ -119,7 +109,7 @@ class DEExperienceCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    title,
+                    listing.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -131,7 +121,7 @@ class DEExperienceCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    subtitle,
+                    listing.subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -149,7 +139,7 @@ class DEExperienceCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        rating.toStringAsFixed(1),
+                        listing.rating.toStringAsFixed(1),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w800,
@@ -157,7 +147,7 @@ class DEExperienceCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       Text(
-                        price,
+                        listing.price,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.88),
                           fontWeight: FontWeight.w700,
@@ -172,7 +162,7 @@ class DEExperienceCard extends StatelessWidget {
                       const SizedBox(width: 3),
                       Flexible(
                         child: Text(
-                          location,
+                          listing.location,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.82),

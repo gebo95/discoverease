@@ -4,8 +4,28 @@ import '../models/listing.dart';
 class ListingRepository {
   const ListingRepository();
 
-  List<Listing> searchListings(String query, {String? filter}) {
-    final filteredListings = getFiltered(filter);
+  List<Listing> getAll() {
+    return List.unmodifiable(liveNowListings);
+  }
+
+  List<Listing> getForDestination(String destination) {
+    final normalizedDestination = destination.trim().toLowerCase();
+
+    return getAll()
+        .where(
+          (listing) =>
+              listing.destination.trim().toLowerCase() == normalizedDestination,
+        )
+        .toList();
+  }
+
+  List<Listing> searchListings(
+    String destination,
+    String query, {
+    String? filter,
+  }) {
+    final filteredListings = getFiltered(destination, filter);
+
     final normalizedQuery = query.trim().toLowerCase();
 
     if (normalizedQuery.isEmpty) {
@@ -28,8 +48,89 @@ class ListingRepository {
     }).toList();
   }
 
-  List<Listing> getFiltered(String? filter) {
-    final listings = getLiveNow();
+  List<Listing> getByCategory(String destination, String category) {
+    final normalizedCategory = category.trim().toLowerCase();
+
+    return getForDestination(destination).where((listing) {
+      final listingCategory = listing.category.toLowerCase();
+      final listingSubcategory = listing.subcategory.toLowerCase();
+      final listingFeatures = listing.features.map(
+        (feature) => feature.toLowerCase(),
+      );
+
+      return listingCategory.contains(normalizedCategory) ||
+          listingSubcategory.contains(normalizedCategory) ||
+          listingFeatures.any(
+            (feature) => feature.contains(normalizedCategory),
+          );
+    }).toList();
+  }
+
+  List<Listing> getLiveNow(String destination) {
+    return getForDestination(
+      destination,
+    ).where((listing) => (listing.pulse ?? "").isNotEmpty).toList();
+  }
+
+  List<Listing> getDining(String destination) {
+    return getForDestination(destination)
+        .where(
+          (listing) =>
+              listing.category.contains("Dining") ||
+              listing.subcategory.toLowerCase().contains("food") ||
+              listing.features.contains("Local Favorite"),
+        )
+        .toList();
+  }
+
+  List<Listing> getBeaches(String destination) {
+    return getForDestination(destination)
+        .where(
+          (listing) =>
+              listing.subcategory.toLowerCase().contains("beach") ||
+              listing.features.contains("Ocean View"),
+        )
+        .toList();
+  }
+
+  List<Listing> getLiveMusic(String destination) {
+    return getForDestination(destination)
+        .where(
+          (listing) =>
+              listing.category.contains("Live Music") ||
+              listing.features.contains("Live Music"),
+        )
+        .toList();
+  }
+
+  List<Listing> getTours(String destination) {
+    return getForDestination(destination)
+        .where(
+          (listing) =>
+              listing.category.contains("Tour") ||
+              listing.subcategory.toLowerCase().contains("tour"),
+        )
+        .toList();
+  }
+
+  List<Listing> getShopping(String destination) {
+    return getForDestination(destination)
+        .where(
+          (listing) =>
+              listing.category.contains("Shopping") ||
+              listing.subcategory.toLowerCase().contains("shop"),
+        )
+        .toList();
+  }
+
+  List<Listing> getHiddenGems(String destination) {
+    return getForDestination(
+      destination,
+    ).where((listing) => listing.features.contains("Hidden Gem")).toList();
+  }
+
+  List<Listing> getFiltered(String destination, String? filter) {
+    final listings = getForDestination(destination);
 
     if (filter == null) {
       return listings;
@@ -103,10 +204,6 @@ class ListingRepository {
       default:
         return listings;
     }
-  }
-
-  List<Listing> getLiveNow() {
-    return liveNowListings;
   }
 
   Listing? getById(String id) {

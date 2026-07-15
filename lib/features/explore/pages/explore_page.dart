@@ -7,6 +7,7 @@ import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_spacing.dart';
 import 'package:provider/provider.dart';
 import '../../../shared/components/chips/de_filter_chip.dart';
+import '../../../repositories/destination_repository.dart';
 
 class ExplorePage extends StatefulWidget {
   const ExplorePage({super.key});
@@ -22,8 +23,14 @@ class _ExplorePageState extends State<ExplorePage> {
 
   @override
   Widget build(BuildContext context) {
+    final destination = context
+        .watch<DestinationRepository>()
+        .currentDestination;
+
     final listingRepository = context.read<ListingRepository>();
+
     final listings = listingRepository.searchListings(
+      destination.country,
       searchQuery,
       filter: selectedFilter,
     );
