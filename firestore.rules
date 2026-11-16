@@ -1,0 +1,227 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.keys().hasAny(['admin'])
+        && request.auth.token.admin == true;
+    }
+
+    function isBusinessOwner(businessId) {
+      return signedIn()
+        && request.auth.token.keys().hasAny(['business_id'])
+        && request.auth.token.business_id == businessId;
+    }
+
+    function ownsBusiness(businessId) {
+      return signedIn() && (
+        isBusinessOwner(businessId)
+        || get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerUid
+          == request.auth.uid
+      );
+    }
+
+    match /users/{userId} {
+      allow read, delete: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.id == userId
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.keys().hasOnly([
+          'id', 'schemaVersion', 'name', 'homeLocation', 'userType',
+          'savedListIds', 'tripIds'
+        ]);
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.keys().hasOnly([
+          'id', 'schemaVersion', 'name', 'homeLocation', 'userType',
+          'savedListIds', 'tripIds'
+        ]);
+
+      match /trips/{tripId} {
+        allow read, delete: if signedIn() && request.auth.uid == userId;
+        allow create, update: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.id == tripId
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.keys().hasAll([
+            'id', 'title', 'destination', 'destinationId', 'startDate',
+            'endDate', 'days', 'estimatedBudget', 'lifecycle'
+          ])
+          && request.resource.data.lifecycle in ['current', 'upcoming']
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'id', 'title', 'destination', 'destinationId',
+            'startDate', 'endDate', 'days', 'estimatedBudget', 'lifecycle'
+          ]);
+      }
+
+      match /saved/{listingId} {
+        allow read, delete: if signedIn() && request.auth.uid == userId;
+        allow create, update: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.listingId == listingId
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.keys().hasAll([
+            'id', 'listingId', 'destination', 'listName'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'id', 'listingId', 'destination', 'listName'
+          ]);
+      }
+
+      match /likes/{listingId} {
+        allow get, list, delete: if signedIn() && request.auth.uid == userId;
+        allow create: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.listingId == listingId
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'listingId', 'createdAt'
+          ])
+          && exists(/databases/$(database)/documents/catalog/$(listingId))
+          && get(/databases/$(database)/documents/catalog/$(listingId)).data.status
+            == 'published';
+        allow update: if false;
+      }
+    }
+
+    match /businesses/{businessId} {
+      // Business profiles hold private contact details (email, phone, owner
+      // uid), so only the owner and admins can read them. Public listing
+      // content lives in `catalog`, not here.
+      allow get, list: if isAdmin()
+        || isBusinessOwner(businessId)
+        || (signedIn() && businessId == request.auth.uid)
+        || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if isAdmin()
+        || (signedIn()
+          && businessId == request.auth.uid
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.id == businessId
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.status == 'pending_review'
+          && request.resource.data.verified == false
+          && request.resource.data.subscriptionTier == 'free'
+          && request.resource.data.keys().hasAll([
+            'schemaVersion', 'id', 'ownerUid', 'name', 'email', 'phone',
+            'website', 'instagram', 'status', 'verified', 'subscriptionTier',
+            'createdAt'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'id', 'ownerUid', 'name', 'email', 'phone',
+            'website', 'instagram', 'status', 'verified', 'subscriptionTier',
+            'createdAt'
+          ]));
+      allow update: if isAdmin()
+        || (ownsBusiness(businessId)
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.verified == resource.data.verified
+          && request.resource.data.subscriptionTier == resource.data.subscriptionTier
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.get('reviewedAt', null)
+            == resource.data.get('reviewedAt', null)
+          && request.resource.data.get('reviewedBy', null)
+            == resource.data.get('reviewedBy', null)
+          && request.resource.data.keys().hasOnly([
+            'schemaVersion', 'id', 'ownerUid', 'name', 'email', 'phone',
+            'website', 'instagram', 'status', 'verified', 'subscriptionTier',
+            'createdAt', 'reviewedAt', 'reviewedBy'
+          ]));
+      // Once a business is published, only an admin may delete its parent.
+      // This prevents orphaning public catalog records through owner deletion.
+      allow delete: if isAdmin()
+        || (ownsBusiness(businessId) && resource.data.status != 'published');
+
+      match /experiences/{experienceId} {
+        allow get, list: if isAdmin()
+          || ownsBusiness(businessId)
+          || resource.data.status == 'published';
+        allow create: if isAdmin()
+          || (ownsBusiness(businessId)
+            && request.resource.data.id == experienceId
+            && request.resource.data.schemaVersion == 1
+            && request.resource.data.status == 'pending_review'
+            && request.resource.data.keys().hasAll([
+              'schemaVersion', 'id', 'title', 'description', 'category',
+              'subcategory', 'destinationId', 'destination', 'location',
+              'price', 'imageUrl', 'status', 'createdAt', 'updatedAt'
+            ])
+            && request.resource.data.keys().hasOnly([
+              'schemaVersion', 'id', 'title', 'description', 'category',
+              'subcategory', 'destinationId', 'destination', 'location',
+              'price', 'imageUrl', 'status', 'createdAt', 'updatedAt'
+            ]));
+        allow update: if isAdmin()
+          || (ownsBusiness(businessId)
+            && request.resource.data.schemaVersion == 1
+            && request.resource.data.id == resource.data.id
+            && request.resource.data.keys().hasOnly([
+              'schemaVersion', 'id', 'title', 'description', 'category',
+              'subcategory', 'destinationId', 'destination', 'location',
+              'price', 'imageUrl', 'status', 'createdAt', 'updatedAt',
+              'reviewNote', 'reviewedAt', 'reviewedBy'
+            ])
+            && (
+              (resource.data.status == 'pending_review'
+                && request.resource.data.status == 'pending_review'
+                && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly([
+                    'title', 'description', 'category', 'subcategory',
+                    'destinationId', 'destination', 'location', 'price',
+                    'imageUrl', 'updatedAt'
+                  ]))
+              || (resource.data.status == 'rejected'
+                && request.resource.data.status == 'pending_review'
+                && request.resource.data.reviewNote == ''
+                && request.resource.data.reviewedAt == null
+                && request.resource.data.reviewedBy == null
+                && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly([
+                    'title', 'description', 'category', 'subcategory',
+                    'destinationId', 'destination', 'location', 'price',
+                    'imageUrl', 'updatedAt', 'status', 'reviewNote',
+                    'reviewedAt', 'reviewedBy'
+                  ]))
+            ));
+        // Published catalog entries are moderated records and must be removed
+        // by the same trusted path that removes their public catalog document.
+        allow delete: if isAdmin()
+          || (ownsBusiness(businessId) && resource.data.status != 'published');
+      }
+    }
+
+    // Recursive match enables the admin-only collectionGroup moderation query.
+    // Existing nested rules continue to grant owners their scoped access.
+    match /{path=**}/experiences/{experienceId} {
+      allow get, list: if isAdmin();
+    }
+
+    match /catalog/{experienceId} {
+      allow get, list: if resource.data.status == 'published';
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /businesses/{businessId}/analytics/{listingId} {
+      allow get, list: if isAdmin() || ownsBusiness(businessId);
+      allow create, update, delete: if false;
+
+      match /daily/{dateId} {
+        allow get, list: if isAdmin() || ownsBusiness(businessId);
+        allow create, update, delete: if false;
+      }
+    }
+
+    // Client apps must never write privileged role grants or admin records.
+    match /admin/{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
