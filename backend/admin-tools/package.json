@@ -1,0 +1,11 @@
+{
+  "name": "discoverease-admin-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "grant-admin": "node grant_admin.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}

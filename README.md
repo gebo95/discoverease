@@ -1,35 +1,57 @@
 # DiscoverEase
 
-DiscoverEase is a Flutter app for discovering destination experiences, saving them, and planning trips, with tools for local businesses and admins.
+DiscoverEase is a Flutter app for discovering destination experiences, saving
+them, and planning trips. The app currently uses local mock data and Provider
+repositories.
 
-## Current handoff snapshot
+## Run locally
 
-The November 11, 2026 project bundle and a detailed continuation prompt are in [handoff/](handoff/):
+Install the Flutter SDK, then run:
 
-- [Download the full project bundle](handoff/DiscoverEase_Handoff_Bundle.zip)
-- [Read the handoff prompt](handoff/DiscoverEase_Handoff_Prompt.md)
+```sh
+flutter pub get
+flutter run
+```
 
-The handoff bundle is the newer project snapshot. The root source tree on this repository's default branch still reflects the original June setup; use the bundle when continuing development unless the root source has since been updated.
+Check the project with:
 
-## Current scope
+```sh
+flutter analyze
+flutter test
+```
 
-Implemented work includes Flutter discovery and trip-planning features, Companion V1 itinerary prompts, Firebase email/password accounts, signed-in trip and saved-place sync, business profile and experience submissions with admin review, and backend-backed business engagement analytics.
+## Project layout
 
-The latest user-reported Flutter test run had one known failure: the browse experience card test reported a 5-pixel horizontal overflow. Run analysis and tests before treating the snapshot as passing.
+- `lib/features/` contains app screens and feature logic.
+- `lib/models/` contains the trip, listing, and user models.
+- `lib/repositories/` supplies app data and in-memory trip updates.
+- `lib/shared/` contains reusable widgets, navigation, and theme components.
+- `test/` contains model, repository, and feature tests.
 
-## Firebase development setup
+## Trip Companion V1
 
-- Project: discoverease-dev
-- Firestore location: nam5
-- Cloud Functions region: us-central1
+Companion evaluates the selected itinerary day using its planned start times,
+travel estimates, completion state, and saved reservation details. It can show
+departure reminders, upcoming plans, meal prompts, and free-time suggestions.
+Open [the Companion V1 notes](docs/11_Companion_V1.md) for current behavior
+and the boundaries for future location, weather, places, events, flight, and AI
+services.
 
-Install Flutter and run:
+See [the Pulse V1 notes](docs/12_Pulse_V1.md) for itinerary reminder behavior
+and service boundaries.
 
-    flutter pub get
-    flutter analyze
-    flutter test
-    flutter run
+See [the Destination System notes](docs/13_Destination_System.md) for catalog
+IDs, area browsing, and the current data limits.
 
-For web development with App Check, use a registered local debug token through --dart-define=APP_CHECK_WEB_DEBUG_TOKEN=.... Never commit the token, service-account keys, ADC files, or passwords. Do not treat the presence of Firebase client configuration as proof that production hardening is complete.
+See [the Backend Foundation notes](docs/14_Backend_Foundation.md) for the
+versioned cloud document shapes, Firebase security rules, and project setup.
+Development Firebase is initialized with email/password account access and a
+Firestore profile record. Trips and saved places sync for signed-in accounts;
+guest demo data stays local. Discovery listings remain local, and business
+photo uploads and their Storage billing setup are not implemented.
 
-Location, routing, weather, external places/events, flights, booking/payment, push notifications, and AI integrations are not implemented. Do not simulate those services as if they work.
+The signed-in Profile links to Business Portal V1 for business and experience
+submissions. Admin-claim accounts can review submissions, and approved
+experiences are merged into Explore from Firestore. Business analytics uses
+real per-experience counts after Cloud Functions and App Check are deployed;
+see [`docs/16_Business_Analytics_V1.md`](docs/16_Business_Analytics_V1.md).
