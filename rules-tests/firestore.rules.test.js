@@ -222,6 +222,67 @@ test('only admins can run the moderation query across all businesses', async () 
   await assertFails(pendingQuery(signedOut()));
 });
 
+test('experience details (address, links, hours) can be submitted and edited while pending', async () => {
+  await seed((db) => setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1')));
+  const owner = asUser('biz-1');
+  const details = {
+    address: '1 Bay Street, Nassau',
+    website: 'https://example.com',
+    bookingUrl: 'https://example.com/book',
+    phone: '+1 242 555 0100',
+    hours: 'Mon-Sat 9am-5pm',
+    schedule: 'Fri and Sat 8pm',
+  };
+  await assertSucceeds(
+    setDoc(doc(owner, 'businesses/biz-1/experiences/exp-1'), experienceDoc('exp-1', details)),
+  );
+  await assertSucceeds(
+    updateDoc(doc(owner, 'businesses/biz-1/experiences/exp-1'), {
+      hours: 'Daily 10am-6pm',
+      website: '',
+      updatedAt: now(),
+    }),
+  );
+});
+
+test('experience links must be plain http(s) addresses and details must stay a sane size', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1'));
+    await setDoc(doc(db, 'businesses/biz-1/experiences/exp-1'), experienceDoc('exp-1'));
+  });
+  const owner = asUser('biz-1');
+  const ref = doc(owner, 'businesses/biz-1/experiences/exp-1');
+  await assertFails(updateDoc(ref, { website: 'javascript:alert(1)', updatedAt: now() }));
+  await assertFails(updateDoc(ref, { bookingUrl: 'ftp://example.com', updatedAt: now() }));
+  await assertFails(updateDoc(ref, { website: 'https://exa mple.com', updatedAt: now() }));
+  await assertFails(updateDoc(ref, { hours: 'x'.repeat(301), updatedAt: now() }));
+  await assertFails(updateDoc(ref, { phone: 12345, updatedAt: now() }));
+  await assertFails(
+    setDoc(
+      doc(owner, 'businesses/biz-1/experiences/exp-2'),
+      experienceDoc('exp-2', { website: 'javascript:alert(1)' }),
+    ),
+  );
+  // Unknown fields are still rejected.
+  await assertFails(updateDoc(ref, { featured: true, updatedAt: now() }));
+});
+
+test('a published experience cannot have its details changed by the owner', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1'));
+    await setDoc(
+      doc(db, 'businesses/biz-1/experiences/exp-1'),
+      experienceDoc('exp-1', { status: 'published', website: 'https://example.com' }),
+    );
+  });
+  await assertFails(
+    updateDoc(doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-1'), {
+      website: 'https://evil.example.com',
+      updatedAt: now(),
+    }),
+  );
+});
+
 // ------------------------------------------------------------------- catalog
 
 test('the public catalog shows only published entries and only admins can write it', async () => {

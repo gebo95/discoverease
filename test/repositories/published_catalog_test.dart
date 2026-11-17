@@ -49,4 +49,42 @@ void main() {
       expect(repository.getForDestination('rome'), hasLength(6));
     });
   });
+
+  test('catalog records carry optional business details onto the listing', () {
+    final listing = Listing.fromCatalogJson({
+      'id': 'experience-9',
+      'title': 'Sunset Cruise',
+      'subtitle': 'Island Tours',
+      'category': 'Tours',
+      'subcategory': 'Boat',
+      'destinationId': 'nassau',
+      'destination': 'Nassau',
+      'location': 'Paradise Island',
+      'address': '1 Bay Street',
+      'website': 'https://example.com',
+      'bookingUrl': 'https://example.com/book',
+      'phone': '+1 242 555 0100',
+      'hours': 'Daily 10am-6pm',
+      'schedule': 'Fri and Sat 8pm',
+      'price': r'$$',
+      'status': 'published',
+      'description': 'Evening boat tour.',
+    });
+    expect(listing.address, '1 Bay Street');
+    expect(listing.website, 'https://example.com');
+    expect(listing.bookingUrl, 'https://example.com/book');
+    expect(listing.phone, '+1 242 555 0100');
+    expect(listing.hours, 'Daily 10am-6pm');
+    expect(listing.schedule, 'Fri and Sat 8pm');
+
+    final plain = Listing.fromCatalogJson({
+      'id': 'experience-10',
+      'title': 'Walk',
+      'destinationId': 'nassau',
+      'destination': 'Nassau',
+      'status': 'published',
+    });
+    expect(plain.website, isEmpty);
+    expect(plain.address, isEmpty);
+  });
 }

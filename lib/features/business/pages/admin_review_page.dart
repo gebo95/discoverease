@@ -101,6 +101,12 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
     final details = [
       '${experience.destination} · ${experience.category}',
       experience.location,
+      if (experience.address.isNotEmpty) 'Address: ${experience.address}',
+      if (experience.phone.isNotEmpty) 'Phone: ${experience.phone}',
+      if (experience.website.isNotEmpty) 'Website: ${experience.website}',
+      if (experience.bookingUrl.isNotEmpty) 'Booking: ${experience.bookingUrl}',
+      if (experience.hours.isNotEmpty) 'Hours: ${experience.hours}',
+      if (experience.schedule.isNotEmpty) 'Schedule: ${experience.schedule}',
       'Business ID: $businessId',
       experience.description,
     ].where((value) => value.trim().isNotEmpty).join('\n');

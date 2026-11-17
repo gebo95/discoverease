@@ -57,6 +57,12 @@ class BusinessExperience {
     required this.imageUrl,
     required this.status,
     this.reviewNote = '',
+    this.address = '',
+    this.website = '',
+    this.bookingUrl = '',
+    this.phone = '',
+    this.hours = '',
+    this.schedule = '',
   });
 
   final String id;
@@ -66,11 +72,25 @@ class BusinessExperience {
   final String subcategory;
   final String destinationId;
   final String destination;
+
+  /// Area or neighborhood shown on cards (for example "Paradise Island").
   final String location;
   final String price;
   final String imageUrl;
   final String status;
   final String reviewNote;
+
+  /// Optional details shown on the public listing once approved.
+  final String address;
+  final String website;
+  final String bookingUrl;
+  final String phone;
+
+  /// Free text such as "Mon-Sat 9am-5pm".
+  final String hours;
+
+  /// Free text for when it happens, such as "Fri and Sat 8pm".
+  final String schedule;
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
@@ -85,6 +105,12 @@ class BusinessExperience {
     'price': price,
     'imageUrl': imageUrl,
     'status': status,
+    'address': address,
+    'website': website,
+    'bookingUrl': bookingUrl,
+    'phone': phone,
+    'hours': hours,
+    'schedule': schedule,
   };
 
   factory BusinessExperience.fromJson(Map<String, Object?> json) {
@@ -105,6 +131,12 @@ class BusinessExperience {
       imageUrl: json['imageUrl'] as String? ?? '',
       status: json['status'] as String? ?? 'pending_review',
       reviewNote: json['reviewNote'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      website: json['website'] as String? ?? '',
+      bookingUrl: json['bookingUrl'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      hours: json['hours'] as String? ?? '',
+      schedule: json['schedule'] as String? ?? '',
     );
   }
 }
