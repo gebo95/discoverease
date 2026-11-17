@@ -61,3 +61,22 @@ Counts are aggregated in daily Firestore documents; businesses cannot read
 individual event receipts. Bookings should appear only after a real booking
 integration exists. See the setup and retention notes in
 [`16_Business_Analytics_V1.md`](16_Business_Analytics_V1.md).
+
+## Listing details (Phase 3, part A)
+
+Experiences can carry optional details that travelers see in "Know before you
+go" once the experience is approved: street address, phone number, website,
+booking or ticket link, hours, and a schedule note ("Fri and Sat 8pm"). Hours
+and schedule are plain text for now; structured dates are a later step.
+
+- Links must be plain `http` or `https` addresses (a bare `example.com` is
+  saved as `https://example.com`). Firestore rules and the form both reject
+  other schemes such as `javascript:`.
+- Length limits: address 200, phone 40, hours and schedule 300, links 300.
+- Details can be edited while an experience is pending review or after a
+  rejection. Editing a live experience is the next step.
+- Approval copies the details into the public `catalog` record. Reviewers see
+  them on the admin review card before approving.
+- Phone and link rows are tappable on the listing page and open the device's
+  phone or browser app.
+

@@ -15,6 +15,13 @@ class Listing {
   /// Set only for catalog items submitted by a business.
   final String? businessId;
   final String location;
+  /// Optional business-provided details, empty when not supplied.
+  final String address;
+  final String website;
+  final String bookingUrl;
+  final String phone;
+  final String hours;
+  final String schedule;
   final String imageUrl;
   final List<String> gallery;
   /// Null means no verified reviews exist yet. Never show a synthetic rating.
@@ -42,6 +49,12 @@ class Listing {
     this.areaId,
     this.businessId,
     required this.location,
+    this.address = '',
+    this.website = '',
+    this.bookingUrl = '',
+    this.phone = '',
+    this.hours = '',
+    this.schedule = '',
     required this.imageUrl,
     this.gallery = const [],
     this.pairedListingIds = const [],
@@ -81,6 +94,12 @@ class Listing {
       areaId: rawAreaId is String ? rawAreaId : null,
       businessId: rawBusinessId is String ? rawBusinessId : null,
       location: value('location'),
+      address: value('address'),
+      website: value('website'),
+      bookingUrl: value('bookingUrl'),
+      phone: value('phone'),
+      hours: value('hours'),
+      schedule: value('schedule'),
       imageUrl: value('imageUrl'),
       gallery: strings('gallery'),
       rating: rawRating is num ? rawRating.toDouble() : null,

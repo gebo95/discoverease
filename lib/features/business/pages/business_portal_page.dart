@@ -9,6 +9,7 @@ import '../../../models/destination.dart';
 import '../../../repositories/destination_repository.dart';
 import '../../../services/firebase_business_service.dart';
 import '../../../services/firebase_engagement_service.dart';
+import '../../../shared/utils/web_link.dart';
 
 class BusinessPortalPage extends StatelessWidget {
   const BusinessPortalPage({super.key});
@@ -532,6 +533,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
   final _subcategory = TextEditingController();
   final _location = TextEditingController();
   final _price = TextEditingController();
+  final _address = TextEditingController();
+  final _phone = TextEditingController();
+  final _website = TextEditingController();
+  final _bookingUrl = TextEditingController();
+  final _hours = TextEditingController();
+  final _schedule = TextEditingController();
   String _category = 'Activities';
   Destination? _destination;
   bool _busy = false;
@@ -549,6 +556,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
       _subcategory.text = experience.subcategory;
       _location.text = experience.location;
       _price.text = experience.price;
+      _address.text = experience.address;
+      _phone.text = experience.phone;
+      _website.text = experience.website;
+      _bookingUrl.text = experience.bookingUrl;
+      _hours.text = experience.hours;
+      _schedule.text = experience.schedule;
       _category = experience.category;
     }
   }
@@ -560,6 +573,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
     _subcategory.dispose();
     _location.dispose();
     _price.dispose();
+    _address.dispose();
+    _phone.dispose();
+    _website.dispose();
+    _bookingUrl.dispose();
+    _hours.dispose();
+    _schedule.dispose();
     super.dispose();
   }
 
@@ -611,9 +630,50 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
               validator: (value) => value == null ? 'Choose a destination.' : null,
             ),
             const SizedBox(height: 12),
-            _requiredField(_location, 'Address or area'),
+            _requiredField(_location, 'Area or neighborhood'),
             _plainField(_subcategory, 'Subcategory (optional)'),
             _plainField(_price, 'Price range (optional)'),
+            const SizedBox(height: 8),
+            Text(
+              'Details travelers will see (all optional)',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            _plainField(
+              _address,
+              'Street address',
+              validator: _maxLength(200),
+            ),
+            _plainField(
+              _phone,
+              'Phone number',
+              keyboardType: TextInputType.phone,
+              validator: _maxLength(40),
+            ),
+            _plainField(
+              _website,
+              'Website',
+              keyboardType: TextInputType.url,
+              validator: _linkValidator,
+            ),
+            _plainField(
+              _bookingUrl,
+              'Booking or ticket link',
+              keyboardType: TextInputType.url,
+              validator: _linkValidator,
+            ),
+            _plainField(
+              _hours,
+              'Hours (for example Mon-Sat 9am-5pm)',
+              maxLines: 2,
+              validator: _maxLength(300),
+            ),
+            _plainField(
+              _schedule,
+              'When it happens (for example Fri and Sat 8pm)',
+              maxLines: 2,
+              validator: _maxLength(300),
+            ),
             const SizedBox(height: 20),
             FilledButton(
               onPressed: _busy ? null : _submit,
@@ -648,14 +708,34 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
         ),
       );
 
-  Widget _plainField(TextEditingController controller, String label) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: TextFormField(
-          controller: controller,
-          decoration: InputDecoration(labelText: label),
-        ),
-      );
+  Widget _plainField(
+    TextEditingController controller,
+    String label, {
+    TextInputType? keyboardType,
+    int maxLines = 1,
+    String? Function(String?)? validator,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      decoration: InputDecoration(labelText: label),
+      validator: validator,
+    ),
+  );
+
+  String? _linkValidator(String? value) {
+    if (value == null || value.trim().isEmpty || isValidWebLink(value)) {
+      return null;
+    }
+    return 'Enter a full web address, for example https://example.com.';
+  }
+
+  String? Function(String?) _maxLength(int limit) =>
+      (value) => (value ?? '').trim().length > limit
+      ? 'Keep this under $limit characters.'
+      : null;
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate() || _destination == null) return;
@@ -675,6 +755,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           location: _location.text,
           price: _price.text,
           imageUrl: '',
+          address: _address.text,
+          website: _website.text,
+          bookingUrl: _bookingUrl.text,
+          phone: _phone.text,
+          hours: _hours.text,
+          schedule: _schedule.text,
         );
       } else {
         await service.updateExperience(
@@ -692,6 +778,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
             imageUrl: existing.imageUrl,
             status: existing.status,
             reviewNote: existing.reviewNote,
+            address: _address.text,
+            website: _website.text,
+            bookingUrl: _bookingUrl.text,
+            phone: _phone.text,
+            hours: _hours.text,
+            schedule: _schedule.text,
           ),
         );
       }

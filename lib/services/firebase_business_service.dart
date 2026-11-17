@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../shared/utils/web_link.dart';
 import '../models/business_profile.dart';
 
 /// Firestore operations for owner-submitted business profiles and experiences.
@@ -83,6 +84,12 @@ class FirebaseBusinessService {
     required String location,
     required String price,
     required String imageUrl,
+    String address = '',
+    String website = '',
+    String bookingUrl = '',
+    String phone = '',
+    String hours = '',
+    String schedule = '',
   }) async {
     final reference = _business(uid).collection('experiences').doc();
     final experience = BusinessExperience(
@@ -97,6 +104,12 @@ class FirebaseBusinessService {
       price: price.trim(),
       imageUrl: imageUrl.trim(),
       status: 'pending_review',
+      address: address.trim(),
+      website: normalizeWebLink(website),
+      bookingUrl: normalizeWebLink(bookingUrl),
+      phone: phone.trim(),
+      hours: hours.trim(),
+      schedule: schedule.trim(),
     );
     await reference.set({
       ...experience.toJson(),
@@ -136,6 +149,12 @@ class FirebaseBusinessService {
         'location': experience.location.trim(),
         'price': experience.price.trim(),
         'imageUrl': experience.imageUrl.trim(),
+        'address': experience.address.trim(),
+        'website': normalizeWebLink(experience.website),
+        'bookingUrl': normalizeWebLink(experience.bookingUrl),
+        'phone': experience.phone.trim(),
+        'hours': experience.hours.trim(),
+        'schedule': experience.schedule.trim(),
         'updatedAt': FieldValue.serverTimestamp(),
         if (resubmitting) ...{
           'status': 'pending_review',

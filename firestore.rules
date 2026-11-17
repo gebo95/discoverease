@@ -17,6 +17,25 @@ service cloud.firestore {
         && request.auth.token.business_id == businessId;
     }
 
+    // Web links must be empty or a plain http(s) address, so values such as
+    // javascript: can never be stored and later opened from a listing.
+    function validWebLink(value) {
+      return value is string
+        && value.size() <= 300
+        && (value == '' || value.matches('https?://[^ ]+[.][^ ]+'));
+    }
+
+    // Optional business-provided details on an experience. A missing field is
+    // fine; a present one must have the right type and a sane length.
+    function validExperienceDetails(data) {
+      return (!('address' in data) || (data.address is string && data.address.size() <= 200))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && (!('hours' in data) || (data.hours is string && data.hours.size() <= 300))
+        && (!('schedule' in data) || (data.schedule is string && data.schedule.size() <= 300))
+        && (!('website' in data) || validWebLink(data.website))
+        && (!('bookingUrl' in data) || validWebLink(data.bookingUrl));
+    }
+
     function ownsBusiness(businessId) {
       return signedIn() && (
         isBusinessOwner(businessId)
@@ -157,8 +176,10 @@ service cloud.firestore {
             && request.resource.data.keys().hasOnly([
               'schemaVersion', 'id', 'title', 'description', 'category',
               'subcategory', 'destinationId', 'destination', 'location',
-              'price', 'imageUrl', 'status', 'createdAt', 'updatedAt'
-            ]));
+              'price', 'imageUrl', 'status', 'createdAt', 'updatedAt',
+              'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
+            ])
+            && validExperienceDetails(request.resource.data));
         allow update: if isAdmin()
           || (ownsBusiness(businessId)
             && request.resource.data.schemaVersion == 1
@@ -167,8 +188,10 @@ service cloud.firestore {
               'schemaVersion', 'id', 'title', 'description', 'category',
               'subcategory', 'destinationId', 'destination', 'location',
               'price', 'imageUrl', 'status', 'createdAt', 'updatedAt',
-              'reviewNote', 'reviewedAt', 'reviewedBy'
+              'reviewNote', 'reviewedAt', 'reviewedBy',
+              'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
             ])
+            && validExperienceDetails(request.resource.data)
             && (
               (resource.data.status == 'pending_review'
                 && request.resource.data.status == 'pending_review'
@@ -176,7 +199,8 @@ service cloud.firestore {
                   .hasOnly([
                     'title', 'description', 'category', 'subcategory',
                     'destinationId', 'destination', 'location', 'price',
-                    'imageUrl', 'updatedAt'
+                    'imageUrl', 'updatedAt',
+                    'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
                   ]))
               || (resource.data.status == 'rejected'
                 && request.resource.data.status == 'pending_review'
@@ -188,7 +212,8 @@ service cloud.firestore {
                     'title', 'description', 'category', 'subcategory',
                     'destinationId', 'destination', 'location', 'price',
                     'imageUrl', 'updatedAt', 'status', 'reviewNote',
-                    'reviewedAt', 'reviewedBy'
+                    'reviewedAt', 'reviewedBy',
+                    'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
                   ]))
             ));
         // Published catalog entries are moderated records and must be removed

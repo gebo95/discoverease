@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../models/listing.dart';
 import '../../../repositories/listing_repository.dart';
@@ -18,6 +19,7 @@ import '../../../shared/components/sections/de_traveler_tips_section.dart';
 import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_radius.dart';
 import '../../../shared/theme/de_spacing.dart';
+import '../../../shared/utils/web_link.dart';
 
 class ListingDetailPage extends StatefulWidget {
   final Listing listing;
@@ -729,6 +731,45 @@ class _KnowBeforeYouGo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final website = parseWebLink(listing.website);
+    final booking = parseWebLink(listing.bookingUrl);
+    final phoneDigits = listing.phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final rows = <({IconData icon, String label, String value, VoidCallback? onTap})>[
+      (icon: Icons.place_outlined, label: 'Area', value: listing.location, onTap: null),
+      if (listing.address.trim().isNotEmpty)
+        (icon: Icons.signpost_outlined, label: 'Address', value: listing.address.trim(), onTap: null),
+      (icon: Icons.category_outlined, label: 'Type', value: listing.subcategory, onTap: null),
+      (icon: Icons.payments_outlined, label: 'Price', value: listing.price, onTap: null),
+      if (listing.hours.trim().isNotEmpty)
+        (icon: Icons.schedule_outlined, label: 'Hours', value: listing.hours.trim(), onTap: null),
+      if (listing.schedule.trim().isNotEmpty)
+        (icon: Icons.event_outlined, label: 'Schedule', value: listing.schedule.trim(), onTap: null),
+      if (listing.phone.trim().isNotEmpty)
+        (
+          icon: Icons.phone_outlined,
+          label: 'Phone',
+          value: listing.phone.trim(),
+          onTap: phoneDigits.isEmpty
+              ? null
+              : () => _openLink(context, Uri(scheme: 'tel', path: phoneDigits)),
+        ),
+      if (website != null)
+        (
+          icon: Icons.language_outlined,
+          label: 'Website',
+          value: listing.website.trim(),
+          onTap: () => _openLink(context, website),
+        ),
+      if (booking != null)
+        (
+          icon: Icons.confirmation_number_outlined,
+          label: 'Booking',
+          value: listing.bookingUrl.trim(),
+          onTap: () => _openLink(context, booking),
+        ),
+      if (listing.status.trim().isNotEmpty)
+        (icon: Icons.info_outline_rounded, label: 'Status', value: listing.status, onTap: null),
+    ];
     return _CardContainer(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -738,30 +779,31 @@ class _KnowBeforeYouGo extends StatelessWidget {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 12),
-          _InfoRow(
-            icon: Icons.place_outlined,
-            label: 'Area',
-            value: listing.location,
-          ),
-          _InfoRow(
-            icon: Icons.category_outlined,
-            label: 'Type',
-            value: listing.subcategory,
-          ),
-          _InfoRow(
-            icon: Icons.payments_outlined,
-            label: 'Price',
-            value: listing.price,
-          ),
-          if (listing.status.trim().isNotEmpty)
+          for (var i = 0; i < rows.length; i++)
             _InfoRow(
-              icon: Icons.info_outline_rounded,
-              label: 'Status',
-              value: listing.status,
-              isLast: true,
+              icon: rows[i].icon,
+              label: rows[i].label,
+              value: rows[i].value,
+              onTap: rows[i].onTap,
+              isLast: i == rows.length - 1,
             ),
         ],
       ),
+    );
+  }
+}
+
+Future<void> _openLink(BuildContext context, Uri uri) async {
+  final messenger = ScaffoldMessenger.of(context);
+  var opened = false;
+  try {
+    opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  } catch (_) {
+    opened = false;
+  }
+  if (!opened) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Could not open that link on this device.')),
     );
   }
 }
@@ -771,12 +813,14 @@ class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
   final bool isLast;
+  final VoidCallback? onTap;
 
   const _InfoRow({
     required this.icon,
     required this.label,
     required this.value,
     this.isLast = false,
+    this.onTap,
   });
 
   @override
@@ -789,7 +833,7 @@ class _InfoRow extends StatelessWidget {
           Icon(icon, size: 18, color: DEColors.primary),
           const SizedBox(width: 9),
           SizedBox(
-            width: 58,
+            width: 72,
             child: Text(
               label,
               style: const TextStyle(color: DEColors.textSecondary),
@@ -797,9 +841,17 @@ class _InfoRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.w700),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: Text(
+                value,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: onTap == null ? null : DEColors.primary,
+                  decoration: onTap == null ? null : TextDecoration.underline,
+                ),
+              ),
             ),
           ),
         ],
