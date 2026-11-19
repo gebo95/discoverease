@@ -36,10 +36,16 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
           }
           if (authorization.data != true) return const _Message('This account does not have admin access.');
           return DefaultTabController(
-            length: 2,
+            length: 3,
             child: Column(
               children: [
-                const TabBar(tabs: [Tab(text: 'Businesses'), Tab(text: 'Experiences')]),
+                const TabBar(
+                  tabs: [
+                    Tab(text: 'Businesses'),
+                    Tab(text: 'Experiences'),
+                    Tab(text: 'Live edits'),
+                  ],
+                ),
                 Expanded(
                   child: TabBarView(
                     children: [
@@ -52,6 +58,11 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
                         stream: review.watchPendingExperiences(),
                         emptyMessage: 'No experiences need review.',
                         itemBuilder: (context, document) => _experienceCard(document, review),
+                      ),
+                      _ReviewStream(
+                        stream: review.watchPendingRevisions(),
+                        emptyMessage: 'No edits to live experiences need review.',
+                        itemBuilder: (context, document) => _revisionCard(document, review),
                       ),
                     ],
                   ),
@@ -133,6 +144,54 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
           experience: experience,
           approve: false,
           reviewNote: note ?? '',
+        ),
+      ),
+    );
+  }
+
+  Widget _revisionCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> document,
+    FirebaseAdminReviewService review,
+  ) {
+    final businessId = document.reference.parent.parent?.id;
+    if (businessId == null) return const SizedBox.shrink();
+    final experience = BusinessExperience.fromJson({
+      ...Map<String, Object?>.from(document.data()),
+      'id': document.id,
+    });
+    final revision = experience.revision;
+    if (revision == null) return const SizedBox.shrink();
+    String shown(String value) => value.isEmpty ? '(empty)' : value;
+    final changes = revision.changesFrom(experience);
+    final details = [
+      'Live now: ${experience.title} (${experience.destination})',
+      'Business ID: $businessId',
+      if (changes.isEmpty) 'No differences from the live version.',
+      for (final change in changes)
+        '${change.label}\n  Now: ${shown(change.before)}\n  Proposed: ${shown(change.after)}',
+    ].join('\n\n');
+    return _ReviewCard(
+      title: '${experience.title} (edit)',
+      details: details,
+      working: _working == 'revision:${document.id}',
+      onApprove: () => _runReview(
+        key: 'revision:${document.id}',
+        title: 'Apply these changes to ${experience.title}?',
+        action: (_) => review.reviewRevision(
+          businessId: businessId,
+          experienceId: document.id,
+          approve: true,
+        ),
+      ),
+      onReject: () => _runReview(
+        key: 'revision:${document.id}',
+        title: 'Reject these changes?',
+        requireNote: true,
+        action: (note) => review.reviewRevision(
+          businessId: businessId,
+          experienceId: document.id,
+          approve: false,
+          note: note ?? '',
         ),
       ),
     );

@@ -122,6 +122,45 @@ class FirebaseBusinessService {
   /// Updates an in-review experience or resubmits a rejected one.
   /// Published records are read-only here so their public catalog copy cannot
   /// drift from the moderated submission.
+  /// Proposes changes to a live experience. The live version keeps showing
+  /// to travelers until an admin approves the revision.
+  Future<void> submitRevision({
+    required String uid,
+    required String experienceId,
+    required ExperienceRevision revision,
+  }) async {
+    final reference = _business(uid).collection('experiences').doc(experienceId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      if (!snapshot.exists) {
+        throw StateError('This experience no longer exists.');
+      }
+      if (snapshot.data()?['status'] != 'published') {
+        throw StateError('Only live experiences use review for changes.');
+      }
+      transaction.update(reference, {
+        'pendingRevision': revision.normalized().toJson(),
+        'revisionStatus': 'pending_review',
+        'revisionNote': '',
+        'revisionSubmittedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  /// Withdraws a pending revision or discards a rejected one. The live
+  /// experience is not touched.
+  Future<void> withdrawRevision({
+    required String uid,
+    required String experienceId,
+  }) => _business(uid).collection('experiences').doc(experienceId).update({
+    'pendingRevision': FieldValue.delete(),
+    'revisionStatus': FieldValue.delete(),
+    'revisionNote': FieldValue.delete(),
+    'revisionSubmittedAt': FieldValue.delete(),
+    'updatedAt': FieldValue.serverTimestamp(),
+  });
+
   Future<void> updateExperience({
     required String uid,
     required BusinessExperience experience,

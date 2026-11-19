@@ -242,8 +242,10 @@ class _BusinessDashboard extends StatelessWidget {
                 final experience = BusinessExperience.fromJson(
                   Map<String, Object?>.from(doc.data()),
                 );
+                final live = experience.status == 'published';
                 final editable = experience.status == 'pending_review' ||
-                    experience.status == 'rejected';
+                    experience.status == 'rejected' ||
+                    live;
                 return Card(
                   child: Padding(
                     padding: const EdgeInsets.all(12),
@@ -266,13 +268,26 @@ class _BusinessDashboard extends StatelessWidget {
                                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                                 ),
                               ],
+                              if (experience.hasPendingRevision ||
+                                  experience.hasRejectedRevision)
+                                _RevisionBanner(
+                                  experience: experience,
+                                  onWithdraw: () => _withdrawRevision(
+                                    context,
+                                    businesses,
+                                    uid,
+                                    experience.id,
+                                  ),
+                                ),
                             ],
                           ),
                         ),
                         _StatusChip(status: experience.status),
                         if (editable)
                           IconButton(
-                            tooltip: experience.status == 'rejected'
+                            tooltip: live
+                                ? 'Edit (changes are reviewed first)'
+                                : experience.status == 'rejected'
                                 ? 'Edit and resubmit'
                                 : 'Edit submission',
                             onPressed: () async {
@@ -288,7 +303,9 @@ class _BusinessDashboard extends StatelessWidget {
                               if (updated == true && context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(experience.status == 'rejected'
+                                    content: Text(live
+                                        ? 'Changes sent for review. The current version stays live until they are approved.'
+                                        : experience.status == 'rejected'
                                         ? 'Updated and resubmitted for review.'
                                         : 'Your changes were saved.'),
                                   ),
@@ -312,6 +329,57 @@ class _BusinessDashboard extends StatelessWidget {
           engagement: context.read<FirebaseEngagementService>(),
         ),
       ],
+    );
+  }
+}
+
+Future<void> _withdrawRevision(
+  BuildContext context,
+  FirebaseBusinessService service,
+  String uid,
+  String experienceId,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await service.withdrawRevision(uid: uid, experienceId: experienceId);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Changes removed. The live version is unchanged.')),
+    );
+  } catch (_) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Could not remove the changes. Try again.')),
+    );
+  }
+}
+
+class _RevisionBanner extends StatelessWidget {
+  const _RevisionBanner({required this.experience, required this.onWithdraw});
+  final BusinessExperience experience;
+  final VoidCallback onWithdraw;
+
+  @override
+  Widget build(BuildContext context) {
+    final rejected = experience.hasRejectedRevision;
+    final color = rejected
+        ? Theme.of(context).colorScheme.error
+        : Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            rejected
+                ? 'Changes not approved: ${experience.revisionNote}'
+                : 'Changes under review. The current version stays live until they are approved.',
+            style: TextStyle(color: color),
+          ),
+          TextButton(
+            onPressed: onWithdraw,
+            child: Text(rejected ? 'Discard changes' : 'Withdraw changes'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -551,18 +619,21 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
     super.initState();
     final experience = widget.experience;
     if (experience != null) {
-      _title.text = experience.title;
-      _description.text = experience.description;
-      _subcategory.text = experience.subcategory;
-      _location.text = experience.location;
-      _price.text = experience.price;
-      _address.text = experience.address;
-      _phone.text = experience.phone;
-      _website.text = experience.website;
-      _bookingUrl.text = experience.bookingUrl;
-      _hours.text = experience.hours;
-      _schedule.text = experience.schedule;
-      _category = experience.category;
+      // Editing a live experience starts from its proposed changes, if any.
+      final source =
+          experience.revision ?? ExperienceRevision.fromExperience(experience);
+      _title.text = source.title;
+      _description.text = source.description;
+      _subcategory.text = source.subcategory;
+      _location.text = source.location;
+      _price.text = source.price;
+      _address.text = source.address;
+      _phone.text = source.phone;
+      _website.text = source.website;
+      _bookingUrl.text = source.bookingUrl;
+      _hours.text = source.hours;
+      _schedule.text = source.schedule;
+      _category = source.category;
     }
   }
 
@@ -588,7 +659,10 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
     _destination ??= widget.experience == null
         ? destinations.first
         : destinations.firstWhere(
-            (destination) => destination.id == widget.experience!.destinationId,
+            (destination) =>
+                destination.id ==
+                (widget.experience!.revision?.destinationId ??
+                    widget.experience!.destinationId),
             orElse: () => destinations.first,
           );
     return Scaffold(
@@ -602,7 +676,9 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(widget.experience?.status == 'rejected'
+            Text(widget.experience?.status == 'published'
+                ? 'Changes to a live experience are reviewed before travelers see them. The current version stays live until then.'
+                : widget.experience?.status == 'rejected'
                 ? 'Update the requested details and resubmit for review.'
                 : 'Submissions are reviewed before they appear in DiscoverEase.'),
             const SizedBox(height: 16),
@@ -684,7 +760,9 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
                     )
                   : Text(widget.experience == null
                       ? 'Submit for review'
-                      : widget.experience!.status == 'rejected'
+                      : widget.experience!.status == 'published'
+                          ? 'Send changes for review'
+                          : widget.experience!.status == 'rejected'
                           ? 'Save and resubmit'
                           : 'Save changes'),
             ),
@@ -761,6 +839,37 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           phone: _phone.text,
           hours: _hours.text,
           schedule: _schedule.text,
+        );
+      } else if (existing.status == 'published') {
+        final revision = ExperienceRevision(
+          title: _title.text,
+          description: _description.text,
+          category: _category,
+          subcategory: _subcategory.text,
+          destinationId: _destination!.id,
+          destination: _destination!.name,
+          location: _location.text,
+          price: _price.text,
+          imageUrl: existing.imageUrl,
+          address: _address.text,
+          website: _website.text,
+          bookingUrl: _bookingUrl.text,
+          phone: _phone.text,
+          hours: _hours.text,
+          schedule: _schedule.text,
+        ).normalized();
+        if (revision.changesFrom(existing).isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Nothing has changed yet.')),
+            );
+          }
+          return;
+        }
+        await service.submitRevision(
+          uid: widget.uid,
+          experienceId: existing.id,
+          revision: revision,
         );
       } else {
         await service.updateExperience(
