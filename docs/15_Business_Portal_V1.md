@@ -80,3 +80,26 @@ and schedule are plain text for now; structured dates are a later step.
 - Phone and link rows are tappable on the listing page and open the device's
   phone or browser app.
 
+## Editing a live experience (Phase 3, part A)
+
+A live experience is never edited in place. The owner proposes changes, an
+admin reviews them, and the live version keeps showing to travelers until the
+changes are approved.
+
+- The proposal is stored on the experience as `pendingRevision` (the
+  reviewable content), with `revisionStatus` (`pending_review` or `rejected`),
+  `revisionNote`, and `revisionSubmittedAt`. Live fields are untouched.
+- The owner can resubmit, withdraw a pending proposal, or discard a rejected
+  one. Firestore rules allow owners to write only these revision fields on a
+  published experience, and the proposal must be well-formed (known fields,
+  valid links, length limits). Photos cannot change through a revision until
+  photo uploads exist.
+- Admins see proposals on the "Live edits" tab as a list of "Now / Proposed"
+  differences. Approving copies the new content to the experience and its
+  public `catalog` entry in one transaction (publish date and ratings are left
+  alone); rejecting requires a reason shown to the business.
+- Reviewing proposals queries `experiences` by `revisionStatus` across all
+  businesses, which needs a collection-group index. The first run prints a
+  one-click link to create it; afterwards, capture it with
+  `firebase firestore:indexes > firestore.indexes.json`.
+

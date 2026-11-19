@@ -36,6 +36,32 @@ service cloud.firestore {
         && (!('bookingUrl' in data) || validWebLink(data.bookingUrl));
     }
 
+    // A proposed change to a live experience. It may only contain reviewable
+    // content, must be well-formed, and cannot change the photo until photo
+    // uploads have their own checks. It never touches the live fields.
+    function validRevision(rev, live) {
+      return rev is map
+        && rev.keys().hasOnly([
+          'title', 'description', 'category', 'subcategory', 'destinationId',
+          'destination', 'location', 'price', 'imageUrl', 'address', 'website',
+          'bookingUrl', 'phone', 'hours', 'schedule'
+        ])
+        && rev.keys().hasAll([
+          'title', 'description', 'category', 'subcategory', 'destinationId',
+          'destination', 'location', 'price', 'imageUrl'
+        ])
+        && rev.title is string && rev.title.size() > 0 && rev.title.size() <= 200
+        && rev.description is string && rev.description.size() <= 5000
+        && rev.category is string && rev.category.size() <= 100
+        && rev.subcategory is string && rev.subcategory.size() <= 100
+        && rev.destinationId is string && rev.destinationId.size() <= 100
+        && rev.destination is string && rev.destination.size() <= 100
+        && rev.location is string && rev.location.size() <= 200
+        && rev.price is string && rev.price.size() <= 50
+        && rev.imageUrl == live.imageUrl
+        && validExperienceDetails(rev);
+    }
+
     function ownsBusiness(businessId) {
       return signedIn() && (
         isBusinessOwner(businessId)
@@ -189,7 +215,9 @@ service cloud.firestore {
               'subcategory', 'destinationId', 'destination', 'location',
               'price', 'imageUrl', 'status', 'createdAt', 'updatedAt',
               'reviewNote', 'reviewedAt', 'reviewedBy',
-              'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
+              'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
+              'pendingRevision', 'revisionStatus', 'revisionNote',
+              'revisionSubmittedAt'
             ])
             && validExperienceDetails(request.resource.data)
             && (
@@ -215,6 +243,26 @@ service cloud.firestore {
                     'reviewedAt', 'reviewedBy',
                     'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
                   ]))
+              // Live experiences are never edited directly. The owner can only
+              // propose a revision (or withdraw one); an admin applies it.
+              || (resource.data.status == 'published'
+                && request.resource.data.status == 'published'
+                && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly([
+                    'pendingRevision', 'revisionStatus', 'revisionNote',
+                    'revisionSubmittedAt', 'updatedAt'
+                  ])
+                && (
+                  (request.resource.data.revisionStatus == 'pending_review'
+                    && request.resource.data.revisionNote == ''
+                    && request.resource.data.revisionSubmittedAt == request.time
+                    && validRevision(
+                      request.resource.data.pendingRevision, resource.data))
+                  || (!('pendingRevision' in request.resource.data)
+                    && !('revisionStatus' in request.resource.data)
+                    && !('revisionNote' in request.resource.data)
+                    && !('revisionSubmittedAt' in request.resource.data))
+                ))
             ));
         // Published catalog entries are moderated records and must be removed
         // by the same trusted path that removes their public catalog document.

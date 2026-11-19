@@ -12,10 +12,12 @@ const {
 const {
   collectionGroup,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
   query,
+  serverTimestamp,
   setDoc,
   updateDoc,
   where,
@@ -279,6 +281,121 @@ test('a published experience cannot have its details changed by the owner', asyn
     updateDoc(doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-1'), {
       website: 'https://evil.example.com',
       updatedAt: now(),
+    }),
+  );
+});
+
+// ------------------------------------------------------- live experience edits
+
+const liveExperience = (overrides = {}) =>
+  experienceDoc('exp-1', { status: 'published', ...overrides });
+
+const revisionFor = (overrides = {}) => ({
+  title: 'Sunset Cruise (new name)',
+  description: 'Evening boat tour.',
+  category: 'Tours',
+  subcategory: 'Boat',
+  destinationId: 'nassau',
+  destination: 'Bahamas',
+  location: 'Paradise Island',
+  price: '$$',
+  imageUrl: '',
+  website: 'https://example.com',
+  ...overrides,
+});
+
+const submitRevisionFields = (revision) => ({
+  pendingRevision: revision,
+  revisionStatus: 'pending_review',
+  revisionNote: '',
+  revisionSubmittedAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
+async function seedLiveExperience(extra = {}) {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1'));
+    await setDoc(doc(db, 'businesses/biz-1/experiences/exp-1'), liveExperience(extra));
+  });
+}
+
+const liveRef = (db) => doc(db, 'businesses/biz-1/experiences/exp-1');
+
+test('an owner can propose changes to a live experience without touching the live fields', async () => {
+  await seedLiveExperience();
+  await assertSucceeds(updateDoc(liveRef(asUser('biz-1')), submitRevisionFields(revisionFor())));
+  // Direct edits of the live fields stay blocked, even alongside a revision.
+  await assertFails(
+    updateDoc(liveRef(asUser('biz-1')), {
+      ...submitRevisionFields(revisionFor()),
+      title: 'Edited without review',
+    }),
+  );
+});
+
+test('a proposed change must be well-formed and cannot change the photo yet', async () => {
+  await seedLiveExperience();
+  const owner = asUser('biz-1');
+  await assertFails(updateDoc(liveRef(owner), submitRevisionFields(revisionFor({ website: 'javascript:alert(1)' }))));
+  await assertFails(updateDoc(liveRef(owner), submitRevisionFields(revisionFor({ imageUrl: 'https://example.com/x.jpg' }))));
+  await assertFails(updateDoc(liveRef(owner), submitRevisionFields(revisionFor({ title: '' }))));
+  await assertFails(updateDoc(liveRef(owner), submitRevisionFields(revisionFor({ featured: true }))));
+  await assertFails(updateDoc(liveRef(owner), submitRevisionFields(revisionFor({ hours: 'x'.repeat(301) }))));
+});
+
+test('an owner cannot approve, reject, or annotate their own proposed change', async () => {
+  await seedLiveExperience();
+  const owner = asUser('biz-1');
+  await assertFails(updateDoc(liveRef(owner), { ...submitRevisionFields(revisionFor()), revisionStatus: 'rejected' }));
+  await assertFails(updateDoc(liveRef(owner), { ...submitRevisionFields(revisionFor()), revisionNote: 'Looks good' }));
+  await assertFails(updateDoc(liveRef(owner), { ...submitRevisionFields(revisionFor()), status: 'pending_review' }));
+  await assertFails(updateDoc(liveRef(asUser('stranger')), submitRevisionFields(revisionFor())));
+});
+
+test('an owner can withdraw or resubmit a proposed change', async () => {
+  await seedLiveExperience({
+    pendingRevision: revisionFor(),
+    revisionStatus: 'rejected',
+    revisionNote: 'Please fix the description.',
+    revisionSubmittedAt: now(),
+  });
+  const owner = asUser('biz-1');
+  await assertSucceeds(updateDoc(liveRef(owner), submitRevisionFields(revisionFor({ title: 'Better name' }))));
+  await assertSucceeds(
+    updateDoc(liveRef(owner), {
+      pendingRevision: deleteField(),
+      revisionStatus: deleteField(),
+      revisionNote: deleteField(),
+      revisionSubmittedAt: deleteField(),
+      updatedAt: serverTimestamp(),
+    }),
+  );
+});
+
+test('admins can apply or reject a proposed change and find them with one query', async () => {
+  await seedLiveExperience({
+    pendingRevision: revisionFor(),
+    revisionStatus: 'pending_review',
+    revisionNote: '',
+    revisionSubmittedAt: now(),
+  });
+  const pendingRevisions = (db) =>
+    getDocs(query(collectionGroup(db, 'experiences'), where('revisionStatus', '==', 'pending_review')));
+  await assertSucceeds(pendingRevisions(asAdmin()));
+  await assertFails(pendingRevisions(asUser('biz-1')));
+  await assertSucceeds(
+    updateDoc(liveRef(asAdmin()), {
+      revisionStatus: 'rejected',
+      revisionNote: 'Please add a clearer description.',
+    }),
+  );
+  await assertSucceeds(
+    updateDoc(liveRef(asAdmin()), {
+      title: 'Sunset Cruise (new name)',
+      pendingRevision: deleteField(),
+      revisionStatus: deleteField(),
+      revisionNote: deleteField(),
+      revisionSubmittedAt: deleteField(),
     }),
   );
 });

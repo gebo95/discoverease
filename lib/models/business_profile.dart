@@ -1,3 +1,5 @@
+import '../shared/utils/web_link.dart';
+
 class BusinessProfile {
   static const int schemaVersion = 1;
 
@@ -63,6 +65,9 @@ class BusinessExperience {
     this.phone = '',
     this.hours = '',
     this.schedule = '',
+    this.revision,
+    this.revisionStatus = '',
+    this.revisionNote = '',
   });
 
   final String id;
@@ -91,6 +96,20 @@ class BusinessExperience {
 
   /// Free text for when it happens, such as "Fri and Sat 8pm".
   final String schedule;
+
+  /// Proposed changes to a live experience. The live fields above stay as
+  /// they are (and stay visible to travelers) until an admin approves it.
+  final ExperienceRevision? revision;
+
+  /// '' when there is no proposed change, otherwise 'pending_review' or
+  /// 'rejected'.
+  final String revisionStatus;
+  final String revisionNote;
+
+  bool get hasPendingRevision =>
+      revision != null && revisionStatus == 'pending_review';
+  bool get hasRejectedRevision =>
+      revision != null && revisionStatus == 'rejected';
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
@@ -137,7 +156,172 @@ class BusinessExperience {
       phone: json['phone'] as String? ?? '',
       hours: json['hours'] as String? ?? '',
       schedule: json['schedule'] as String? ?? '',
+      revision: json['pendingRevision'] is Map
+          ? ExperienceRevision.fromJson(
+              Map<String, Object?>.from(json['pendingRevision'] as Map),
+            )
+          : null,
+      revisionStatus: json['revisionStatus'] as String? ?? '',
+      revisionNote: json['revisionNote'] as String? ?? '',
     );
+  }
+}
+
+/// One difference between the live experience and a proposed revision.
+class RevisionChange {
+  const RevisionChange({
+    required this.label,
+    required this.before,
+    required this.after,
+  });
+
+  final String label;
+  final String before;
+  final String after;
+}
+
+/// The reviewable content of an experience. A business edits a live
+/// experience by proposing one of these; it only replaces the live content
+/// once an admin approves it.
+class ExperienceRevision {
+  const ExperienceRevision({
+    required this.title,
+    required this.description,
+    required this.category,
+    required this.subcategory,
+    required this.destinationId,
+    required this.destination,
+    required this.location,
+    required this.price,
+    required this.imageUrl,
+    this.address = '',
+    this.website = '',
+    this.bookingUrl = '',
+    this.phone = '',
+    this.hours = '',
+    this.schedule = '',
+  });
+
+  factory ExperienceRevision.fromExperience(BusinessExperience experience) =>
+      ExperienceRevision(
+        title: experience.title,
+        description: experience.description,
+        category: experience.category,
+        subcategory: experience.subcategory,
+        destinationId: experience.destinationId,
+        destination: experience.destination,
+        location: experience.location,
+        price: experience.price,
+        imageUrl: experience.imageUrl,
+        address: experience.address,
+        website: experience.website,
+        bookingUrl: experience.bookingUrl,
+        phone: experience.phone,
+        hours: experience.hours,
+        schedule: experience.schedule,
+      );
+
+  factory ExperienceRevision.fromJson(Map<String, Object?> json) {
+    String text(String key) => json[key] as String? ?? '';
+    return ExperienceRevision(
+      title: text('title'),
+      description: text('description'),
+      category: text('category'),
+      subcategory: text('subcategory'),
+      destinationId: text('destinationId'),
+      destination: text('destination'),
+      location: text('location'),
+      price: text('price'),
+      imageUrl: text('imageUrl'),
+      address: text('address'),
+      website: text('website'),
+      bookingUrl: text('bookingUrl'),
+      phone: text('phone'),
+      hours: text('hours'),
+      schedule: text('schedule'),
+    );
+  }
+
+  final String title;
+  final String description;
+  final String category;
+  final String subcategory;
+  final String destinationId;
+  final String destination;
+  final String location;
+  final String price;
+  final String imageUrl;
+  final String address;
+  final String website;
+  final String bookingUrl;
+  final String phone;
+  final String hours;
+  final String schedule;
+
+  Map<String, Object?> toJson() => {
+    'title': title,
+    'description': description,
+    'category': category,
+    'subcategory': subcategory,
+    'destinationId': destinationId,
+    'destination': destination,
+    'location': location,
+    'price': price,
+    'imageUrl': imageUrl,
+    'address': address,
+    'website': website,
+    'bookingUrl': bookingUrl,
+    'phone': phone,
+    'hours': hours,
+    'schedule': schedule,
+  };
+
+  /// Trimmed text with web links in their stored form, so comparing and
+  /// saving never depends on stray spaces or a missing "https://".
+  ExperienceRevision normalized() => ExperienceRevision(
+    title: title.trim(),
+    description: description.trim(),
+    category: category.trim(),
+    subcategory: subcategory.trim(),
+    destinationId: destinationId.trim(),
+    destination: destination.trim(),
+    location: location.trim(),
+    price: price.trim(),
+    imageUrl: imageUrl.trim(),
+    address: address.trim(),
+    website: normalizeWebLink(website),
+    bookingUrl: normalizeWebLink(bookingUrl),
+    phone: phone.trim(),
+    hours: hours.trim(),
+    schedule: schedule.trim(),
+  );
+
+  /// What this revision would change on [live], in a form a reviewer can read.
+  List<RevisionChange> changesFrom(BusinessExperience live) {
+    final proposed = normalized();
+    final current = ExperienceRevision.fromExperience(live).normalized();
+    final changes = <RevisionChange>[];
+    void compare(String label, String before, String after) {
+      if (before != after) {
+        changes.add(RevisionChange(label: label, before: before, after: after));
+      }
+    }
+
+    compare('Name', current.title, proposed.title);
+    compare('Description', current.description, proposed.description);
+    compare('Category', current.category, proposed.category);
+    compare('Type', current.subcategory, proposed.subcategory);
+    compare('Destination', current.destination, proposed.destination);
+    compare('Area', current.location, proposed.location);
+    compare('Price', current.price, proposed.price);
+    compare('Photo', current.imageUrl, proposed.imageUrl);
+    compare('Street address', current.address, proposed.address);
+    compare('Phone', current.phone, proposed.phone);
+    compare('Website', current.website, proposed.website);
+    compare('Booking link', current.bookingUrl, proposed.bookingUrl);
+    compare('Hours', current.hours, proposed.hours);
+    compare('Schedule', current.schedule, proposed.schedule);
+    return changes;
   }
 }
 
