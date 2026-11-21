@@ -147,7 +147,11 @@ class TripDashboardHelpers {
       final editExperience = onEditExperience;
 
       return DETimelineItem(
-        title: listing?.title ?? 'Unknown Experience',
+        title: listing == null
+            ? 'Unknown Experience'
+            : listing.unavailability == null
+            ? listing.title
+            : '${listing.title} (${listing.unavailability!.label.toLowerCase()})',
         time: tripExperience.time,
         note: tripExperience.notes,
         estimatedCost: tripExperience.estimatedCost,

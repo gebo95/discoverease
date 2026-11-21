@@ -1,14 +1,19 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/business_profile.dart';
 import '../../../models/business_analytics.dart';
 import '../../../models/destination.dart';
 import '../../../repositories/destination_repository.dart';
+import '../../../services/experience_photo_service.dart';
 import '../../../services/firebase_business_service.dart';
 import '../../../services/firebase_engagement_service.dart';
+import '../../../shared/utils/photo_files.dart';
 import '../../../shared/utils/web_link.dart';
 
 class BusinessPortalPage extends StatelessWidget {
@@ -261,6 +266,13 @@ class _BusinessDashboard extends StatelessWidget {
                                   style: Theme.of(context).textTheme.titleMedium),
                               const SizedBox(height: 4),
                               Text('${experience.destination} · ${experience.category}'),
+                              if (live && _availabilityNote(experience) != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  _availabilityNote(experience)!,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
                               if (experience.reviewNote.trim().isNotEmpty) ...[
                                 const SizedBox(height: 6),
                                 Text(
@@ -282,7 +294,10 @@ class _BusinessDashboard extends StatelessWidget {
                             ],
                           ),
                         ),
-                        _StatusChip(status: experience.status),
+                        _StatusChip(
+                          status: experience.status,
+                          availability: live ? experience.availability : 'live',
+                        ),
                         if (editable)
                           IconButton(
                             tooltip: live
@@ -314,6 +329,11 @@ class _BusinessDashboard extends StatelessWidget {
                             },
                             icon: const Icon(Icons.edit_outlined),
                           ),
+                        _ExperienceMenu(
+                          experience: experience,
+                          uid: uid,
+                          service: businesses,
+                        ),
                       ],
                     ),
                   ),
@@ -610,6 +630,13 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
   String _category = 'Activities';
   Destination? _destination;
   bool _busy = false;
+
+  /// Photos in order, cover first. Entries are private upload paths for new
+  /// photos and public addresses for approved ones.
+  final List<String> _photos = [];
+  final Map<String, Uint8List> _previews = {};
+  bool _uploading = false;
+  late final String _experienceId;
   static const _categories = [
     'Activities', 'Dining', 'Tours', 'Entertainment', 'Shopping', 'Other',
   ];
@@ -618,10 +645,16 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
   void initState() {
     super.initState();
     final experience = widget.experience;
+    // A new experience gets its id up front so photos can be uploaded to its
+    // own folder before it is submitted.
+    _experienceId =
+        experience?.id ??
+        context.read<FirebaseBusinessService>().newExperienceId(widget.uid);
     if (experience != null) {
       // Editing a live experience starts from its proposed changes, if any.
       final source =
           experience.revision ?? ExperienceRevision.fromExperience(experience);
+      _photos.addAll(source.photos);
       _title.text = source.title;
       _description.text = source.description;
       _subcategory.text = source.subcategory;
@@ -750,9 +783,22 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
               maxLines: 2,
               validator: _maxLength(300),
             ),
+            const SizedBox(height: 24),
+            _PhotoEditor(
+              photos: _photos,
+              previews: _previews,
+              uploading: _uploading,
+              isLive: widget.experience?.status == 'published',
+              service: context.read<ExperiencePhotoService>(),
+              onAdd: _addPhotos,
+              onRemove: (index) => setState(() => _photos.removeAt(index)),
+              onMakeCover: (index) => setState(() {
+                _photos.insert(0, _photos.removeAt(index));
+              }),
+            ),
             const SizedBox(height: 20),
             FilledButton(
-              onPressed: _busy ? null : _submit,
+              onPressed: _busy || _uploading ? null : _submit,
               child: _busy
                   ? const SizedBox.square(
                       dimension: 20,
@@ -815,6 +861,62 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
       ? 'Keep this under $limit characters.'
       : null;
 
+  Future<void> _addPhotos() async {
+    final remaining = maxExperiencePhotos - _photos.length;
+    if (remaining <= 0 || _uploading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final photoService = context.read<ExperiencePhotoService>();
+    final picker = ImagePicker();
+    List<XFile> picked;
+    try {
+      // The picker only accepts a limit of 2 or more, so the last free slot
+      // uses the single-photo picker.
+      picked = remaining >= 2
+          ? await picker.pickMultiImage(
+              maxWidth: 1920,
+              imageQuality: 85,
+              limit: remaining,
+            )
+          : [
+              ?await picker.pickImage(
+                source: ImageSource.gallery,
+                maxWidth: 1920,
+                imageQuality: 85,
+              ),
+            ];
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not open your photos.')),
+      );
+      return;
+    }
+    if (picked.isEmpty || !mounted) return;
+    setState(() => _uploading = true);
+    for (final file in picked.take(remaining)) {
+      try {
+        final bytes = await file.readAsBytes();
+        final path = await photoService.uploadPending(
+          businessId: widget.uid,
+          experienceId: _experienceId,
+          bytes: bytes,
+          fileName: file.name,
+        );
+        if (!mounted) return;
+        setState(() {
+          _photos.add(path);
+          _previews[path] = bytes;
+        });
+      } on StateError catch (error) {
+        messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      } catch (_) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Could not upload ${file.name}. Try again.')),
+        );
+      }
+    }
+    if (mounted) setState(() => _uploading = false);
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate() || _destination == null) return;
     setState(() => _busy = true);
@@ -839,6 +941,8 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           phone: _phone.text,
           hours: _hours.text,
           schedule: _schedule.text,
+          photos: List.of(_photos),
+          id: _experienceId,
         );
       } else if (existing.status == 'published') {
         final revision = ExperienceRevision(
@@ -857,12 +961,33 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           phone: _phone.text,
           hours: _hours.text,
           schedule: _schedule.text,
+          photos: List.of(_photos),
         ).normalized();
+        // Choosing a different cover among photos that are already approved
+        // takes effect right away; it never goes through review.
+        final coverOnly =
+            _photos.isNotEmpty &&
+            samePhotoSet(existing.photos, _photos) &&
+            !samePhotoOrder(existing.photos, _photos);
+        if (coverOnly) {
+          await service.setCoverPhoto(
+            uid: widget.uid,
+            experienceId: existing.id,
+            photoUrl: _photos.first,
+          );
+        }
         if (revision.changesFrom(existing).isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Nothing has changed yet.')),
+              SnackBar(
+                content: Text(
+                  coverOnly
+                      ? 'Cover photo updated. It is live now.'
+                      : 'Nothing has changed yet.',
+                ),
+              ),
             );
+            if (coverOnly) Navigator.pop(context);
           }
           return;
         }
@@ -893,6 +1018,7 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
             phone: _phone.text,
             hours: _hours.text,
             schedule: _schedule.text,
+            photos: List.of(_photos),
           ),
         );
       }
@@ -948,13 +1074,255 @@ class _ReviewStatus extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.status});
+  const _StatusChip({required this.status, this.availability = 'live'});
   final String status;
+  final String availability;
 
   @override
   Widget build(BuildContext context) => Chip(
-    label: Text(status == 'pending_review' ? 'Pending' : status),
+    label: Text(
+      availability == 'hidden'
+          ? 'Hidden'
+          : availability == 'ended'
+          ? 'Ended'
+          : status == 'pending_review'
+          ? 'Pending'
+          : status,
+    ),
     visualDensity: VisualDensity.compact,
+  );
+}
+
+String _formatDate(DateTime date) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final local = date.toLocal();
+  return '${months[local.month - 1]} ${local.day}, ${local.year}';
+}
+
+/// One line under a live experience about its visibility and end date.
+String? _availabilityNote(BusinessExperience experience) {
+  if (experience.hasEnded) {
+    return 'Ended${experience.endsAt == null ? '' : ' on ${_formatDate(experience.endsAt!)}'}. '
+        'Travelers who saved it see it as no longer available.';
+  }
+  if (experience.isHidden) {
+    return 'Hidden from travelers. People who saved it see it as temporarily unavailable.';
+  }
+  if (experience.endsAt != null) {
+    return 'Ends ${_formatDate(experience.endsAt!)}';
+  }
+  return null;
+}
+
+enum _ExperienceAction { hide, show, setEnd, clearEnd, delete }
+
+class _ExperienceMenu extends StatelessWidget {
+  const _ExperienceMenu({
+    required this.experience,
+    required this.uid,
+    required this.service,
+  });
+
+  final BusinessExperience experience;
+  final String uid;
+  final FirebaseBusinessService service;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = experience.status == 'published';
+    return PopupMenuButton<_ExperienceAction>(
+      tooltip: 'More actions',
+      onSelected: (action) => _run(context, action),
+      itemBuilder: (_) => [
+        if (live && experience.availability == 'live')
+          const PopupMenuItem(
+            value: _ExperienceAction.hide,
+            child: Text('Hide from travelers'),
+          ),
+        if (live && experience.isHidden)
+          const PopupMenuItem(
+            value: _ExperienceAction.show,
+            child: Text('Show again'),
+          ),
+        if (live)
+          PopupMenuItem(
+            value: _ExperienceAction.setEnd,
+            child: Text(
+              experience.hasEnded
+                  ? 'Run again with a new end date'
+                  : experience.endsAt == null
+                  ? 'Set an end date'
+                  : 'Change end date',
+            ),
+          ),
+        if (live && experience.endsAt != null && !experience.hasEnded)
+          const PopupMenuItem(
+            value: _ExperienceAction.clearEnd,
+            child: Text('Remove end date'),
+          ),
+        const PopupMenuItem(
+          value: _ExperienceAction.delete,
+          child: Text('Delete'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _run(BuildContext context, _ExperienceAction action) async {
+    final messenger = ScaffoldMessenger.of(context);
+    Future<void> attempt(Future<void> Function() work, String done) async {
+      try {
+        await work();
+        messenger.showSnackBar(SnackBar(content: Text(done)));
+      } on StateError catch (error) {
+        messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      } catch (_) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Could not update this. Try again.')),
+        );
+      }
+    }
+
+    switch (action) {
+      case _ExperienceAction.hide:
+        final note = await _askForNotice(
+          context,
+          title: 'Hide "${experience.title}"?',
+          body:
+              'It leaves the public list right away, with no review needed. '
+              'People who saved it will see it as temporarily unavailable. '
+              'You can show it again whenever you like.',
+          confirmLabel: 'Hide',
+        );
+        if (note == null) return;
+        await attempt(
+          () => service.hideExperience(
+            uid: uid,
+            experienceId: experience.id,
+            message: note,
+          ),
+          'Hidden. Travelers who saved it can see it is unavailable.',
+        );
+      case _ExperienceAction.show:
+        await attempt(
+          () => service.showExperience(uid: uid, experienceId: experience.id),
+          'It is showing to travelers again.',
+        );
+      case _ExperienceAction.setEnd:
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: DateTime.now().add(const Duration(days: 30)),
+          firstDate: DateTime.now().add(const Duration(days: 1)),
+          lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+          helpText: 'Last day this is offered',
+        );
+        if (picked == null) return;
+        // The whole chosen day counts, in the owner's own time zone.
+        final endsAt = DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
+        await attempt(
+          () => service.setEndDate(
+            uid: uid,
+            experienceId: experience.id,
+            endsAt: endsAt,
+          ),
+          experience.hasEnded
+              ? 'Running again until ${_formatDate(endsAt)}.'
+              : 'It will end after ${_formatDate(endsAt)}.',
+        );
+      case _ExperienceAction.clearEnd:
+        await attempt(
+          () => service.setEndDate(
+            uid: uid,
+            experienceId: experience.id,
+            endsAt: null,
+          ),
+          'End date removed.',
+        );
+      case _ExperienceAction.delete:
+        final wasLive = experience.status == 'published';
+        final note = await _askForNotice(
+          context,
+          title: 'Delete "${experience.title}"?',
+          body: wasLive
+              ? 'This cannot be undone. People who saved it will see it as no '
+                    'longer available. To pause it instead, choose Hide.'
+              : 'This cannot be undone.',
+          confirmLabel: 'Delete',
+          destructive: true,
+          askForNote: wasLive,
+        );
+        if (note == null) return;
+        await attempt(
+          () => service.deleteExperience(
+            uid: uid,
+            experienceId: experience.id,
+            message: note,
+          ),
+          'Deleted.',
+        );
+    }
+  }
+}
+
+/// Asks the owner to confirm, with an optional note travelers will see.
+/// Returns null if cancelled, otherwise the note (possibly empty).
+Future<String?> _askForNotice(
+  BuildContext context, {
+  required String title,
+  required String body,
+  required String confirmLabel,
+  bool destructive = false,
+  bool askForNote = true,
+}) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(body),
+            if (askForNote) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                maxLength: 280,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Message to people who saved it (optional)',
+                  helperText:
+                      'For example why you are pausing, or when you will be back. '
+                      'No web addresses please.',
+                  helperMaxLines: 3,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: destructive
+              ? FilledButton.styleFrom(
+                  backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                )
+              : null,
+          onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+          child: Text(confirmLabel),
+        ),
+      ],
+    ),
   );
 }
 
@@ -969,4 +1337,217 @@ class _CenteredMessage extends StatelessWidget {
       child: Text(message, textAlign: TextAlign.center),
     ),
   );
+}
+
+/// Photo section of the experience form: thumbnails with the cover first, a
+/// way to choose a different cover, remove a photo, or add more.
+class _PhotoEditor extends StatelessWidget {
+  static const _newNote =
+      'Up to $maxExperiencePhotos photos (JPEG, PNG or WebP, under 5 MB each). '
+      'The first one is the cover. New photos are reviewed before travelers '
+      'see them.';
+  static const _liveNote =
+      'Up to $maxExperiencePhotos photos (JPEG, PNG or WebP, under 5 MB each). '
+      'The first one is the cover. New photos are reviewed before travelers '
+      'see them, and your current photos stay up until then. Choosing a '
+      'different cover from photos that are already approved takes effect '
+      'right away.';
+
+  const _PhotoEditor({
+    required this.photos,
+    required this.previews,
+    required this.uploading,
+    required this.isLive,
+    required this.service,
+    required this.onAdd,
+    required this.onRemove,
+    required this.onMakeCover,
+  });
+
+  final List<String> photos;
+  final Map<String, Uint8List> previews;
+  final bool uploading;
+  final bool isLive;
+  final ExperiencePhotoService service;
+  final VoidCallback onAdd;
+  final void Function(int index) onRemove;
+  final void Function(int index) onMakeCover;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final canAdd = photos.length < maxExperiencePhotos && !uploading;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Photos', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 4),
+        Text(
+          isLive ? _liveNote : _newNote,
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (var i = 0; i < photos.length; i++)
+              _PhotoTile(
+                key: ValueKey(photos[i]),
+                entry: photos[i],
+                preview: previews[photos[i]],
+                service: service,
+                isCover: i == 0,
+                onMakeCover: () => onMakeCover(i),
+                onRemove: () => onRemove(i),
+              ),
+            if (photos.length < maxExperiencePhotos)
+              SizedBox(
+                width: 112,
+                height: 112,
+                child: OutlinedButton(
+                  onPressed: canAdd ? onAdd : null,
+                  child: uploading
+                      ? const SizedBox.square(
+                          dimension: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_photo_alternate_outlined),
+                            SizedBox(height: 4),
+                            Text('Add photos'),
+                          ],
+                        ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _PhotoTile extends StatefulWidget {
+  const _PhotoTile({
+    super.key,
+    required this.entry,
+    required this.preview,
+    required this.service,
+    required this.isCover,
+    required this.onMakeCover,
+    required this.onRemove,
+  });
+
+  final String entry;
+  final Uint8List? preview;
+  final ExperiencePhotoService service;
+  final bool isCover;
+  final VoidCallback onMakeCover;
+  final VoidCallback onRemove;
+
+  @override
+  State<_PhotoTile> createState() => _PhotoTileState();
+}
+
+class _PhotoTileState extends State<_PhotoTile> {
+  late final Future<String> _url = widget.service.urlFor(widget.entry);
+
+  @override
+  Widget build(BuildContext context) {
+    const broken = ColoredBox(
+      color: Color(0x11000000),
+      child: Center(child: Icon(Icons.image_not_supported_outlined)),
+    );
+    final Widget image = widget.preview != null
+        ? Image.memory(widget.preview!, fit: BoxFit.cover)
+        : FutureBuilder<String>(
+            future: _url,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) return broken;
+              if (!snapshot.hasData) {
+                return const Center(
+                  child: SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              return Image.network(
+                snapshot.data!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => broken,
+              );
+            },
+          );
+    return SizedBox(
+      width: 112,
+      height: 136,
+      child: Column(
+        children: [
+          SizedBox(
+            width: 112,
+            height: 112,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: image,
+                ),
+                if (widget.isCover)
+                  Positioned(
+                    left: 6,
+                    bottom: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Cover',
+                        style: TextStyle(color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  top: 2,
+                  right: 2,
+                  child: IconButton.filledTonal(
+                    tooltip: 'Remove photo',
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 16,
+                    onPressed: widget.onRemove,
+                    icon: const Icon(Icons.close),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 24,
+            child: widget.isCover
+                ? const SizedBox.shrink()
+                : TextButton(
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: widget.onMakeCover,
+                    child: const Text(
+                      'Make cover',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 }

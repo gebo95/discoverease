@@ -103,3 +103,32 @@ changes are approved.
   one-click link to create it; afterwards, capture it with
   `firebase firestore:indexes > firestore.indexes.json`.
 
+
+## Hide, delete and end (Phase 3)
+
+Owners manage a live experience from the "..." menu on its card. None of these need review, because they only take content away. A note to travelers is the one piece of owner text that skips review, so it is limited to 280 characters of plain text with no web addresses.
+
+| Action | What travelers see |
+| --- | --- |
+| Hide | Removed from browsing and search. Anyone who saved it or planned it sees "Temporarily unavailable" and the owner's note, if any. Show again restores it. |
+| Delete | Permanent. Saved and planned copies show "No longer available" and the note. |
+| End date | When the date passes (checked hourly) the experience ends: off the public list, shown to the owner as "Ended", shown to travelers as "Ended". Setting a new date runs it again. |
+
+How it works:
+
+- Everything goes through the `manageExperience` callable (owner or admin only) or the hourly `endExpiredExperiences` job. Each change updates the experience, flips the public `catalog` entry between `published` and `hidden`, and writes or clears a public `unavailable/{listingId}` notice in one transaction. Clients cannot write any of these (see `firestore.rules`).
+- The notice holds only what is already public (title, image, destination, category) plus the reason and note.
+- The app watches notices only for the places the traveler saved or planned, and shows those places greyed out with the reason instead of dropping them.
+- Likes, views, shares and saves stop counting while a listing is hidden, because analytics only record published listings.
+- Hidden listings still accept edit proposals; approving one updates the hidden catalog entry without relisting it.
+- Not built yet: push notifications to travelers (parked with the app-bar bell) and drafts or archive states.
+
+## Photos (Phase 3)
+
+Owners add up to 5 photos per experience (JPEG, PNG or WebP, 5 MB each) and choose which one is the cover.
+
+- **Review.** New photos are reviewed like any other change. A live experience keeps its current photos until an admin approves the proposed ones; the admin sees the old and new photos side by side in the "Live edits" tab.
+- **Cover.** Choosing a different cover among photos that are already approved is instant and needs no review (`manageExperience` action `set_cover`), because it adds nothing new.
+- **Storage.** Uploads go to `pending/{businessId}/{experienceId}/`, which only the owner and admins can read. Approval calls the admin-only `publishExperiencePhotos` function, which copies the files to `public/{businessId}/{experienceId}/` (readable by anyone, writable only by the server). Files are never overwritten once uploaded.
+- **Data.** `photos` on the experience (and inside a pending revision) lists the photos, cover first. Entries are private upload paths until approved, then public addresses. `imageUrl` mirrors the cover, and the public catalog entry carries `imageUrl` plus `gallery` (the rest).
+- **Known limits for now.** Removed or replaced photos are not deleted from Storage, and abandoned uploads stay in the private folder; a cleanup job comes later. Owners can upload several unused files to `pending/` (only size and type are limited).

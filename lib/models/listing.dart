@@ -1,5 +1,38 @@
 import 'review.dart';
 
+/// Why a listing travelers saved is no longer being offered. Built from the
+/// small public notice a Cloud Function leaves behind.
+class ListingUnavailability {
+  const ListingUnavailability({required this.reason, this.message = ''});
+
+  /// 'temporary' (hidden for now), 'removed' (deleted) or 'ended'.
+  final String reason;
+
+  /// Optional note from the business, empty if they left none.
+  final String message;
+
+  bool get isTemporary => reason == 'temporary';
+
+  /// Short label for cards and banners.
+  String get label => switch (reason) {
+    'temporary' => 'Temporarily unavailable',
+    'ended' => 'Ended',
+    _ => 'No longer available',
+  };
+
+  /// One sentence of explanation, including the business's note if present.
+  String get explanation {
+    final base = switch (reason) {
+      'temporary' =>
+        'The business has paused this experience. It may come back, and it will '
+            'return to your saved places if it does.',
+      'ended' => 'This experience has finished.',
+      _ => 'The business has removed this experience.',
+    };
+    return message.isEmpty ? base : '$base They said: "$message"';
+  }
+}
+
 class Listing {
   final String id;
   final String title;
@@ -38,6 +71,47 @@ class Listing {
   final List<Review> reviews;
   final String? pulse;
 
+  /// Set only for a placeholder standing in for a listing that travelers saved
+  /// or planned but that is no longer offered. Normal listings leave it null.
+  final ListingUnavailability? unavailability;
+
+  /// When the business says this stops being offered, if it has an end date.
+  final DateTime? endsAt;
+
+  /// "Dec 1, 2026" style date used on cards and warnings.
+  static String shortDate(DateTime date) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final local = date.toLocal();
+    return '${months[local.month - 1]} ${local.day}, ${local.year}';
+  }
+
+  /// A heads-up for planning this on [dayDate], or null if there is nothing
+  /// to flag. A day after the end date gets a firm warning; with no date set
+  /// yet the traveler is just reminded to check. Adding is always allowed,
+  /// because trip dates are often not final.
+  String? endWarning({DateTime? dayDate}) {
+    final end = endsAt;
+    if (end == null) return null;
+    final endLocal = end.toLocal();
+    final endDay = DateTime(endLocal.year, endLocal.month, endLocal.day);
+    final text = shortDate(end);
+    if (dayDate == null) {
+      return 'This ends on $text. Check that it is still running on the '
+          'day you go.';
+    }
+    final day = DateTime(dayDate.year, dayDate.month, dayDate.day);
+    if (day.isAfter(endDay)) {
+      return 'This ends on $text, before this day of your trip. You can still '
+          'add it in case your dates change.';
+    }
+    return null;
+  }
+
+  bool get isUnavailable => unavailability != null;
+
   const Listing({
     required this.id,
     required this.title,
@@ -69,7 +143,37 @@ class Listing {
     this.continueDayIds = const [],
     this.reviews = const [],
     this.pulse,
+    this.unavailability,
+    this.endsAt,
   });
+
+  /// A stand-in for a listing that is no longer public, built from its
+  /// `unavailable` notice so saved places and trips can still show it.
+  factory Listing.fromUnavailableJson(Map<String, Object?> json) {
+    String value(String key) => json[key] is String ? json[key] as String : '';
+    final rawAreaId = json['areaId'];
+    return Listing(
+      id: value('listingId'),
+      title: value('title').isEmpty ? 'Experience' : value('title'),
+      subtitle: '',
+      category: value('category'),
+      subcategory: value('subcategory'),
+      destinationId: value('destinationId'),
+      destination: value('destination'),
+      areaId: rawAreaId is String ? rawAreaId : null,
+      location: value('location'),
+      imageUrl: value('imageUrl'),
+      rating: null,
+      price: '',
+      status: 'Unavailable',
+      description: '',
+      whyYoullLoveIt: '',
+      unavailability: ListingUnavailability(
+        reason: value('reason'),
+        message: value('message'),
+      ),
+    );
+  }
 
   factory Listing.fromCatalogJson(Map<String, Object?> json) {
     String value(String key) => json[key] is String ? json[key] as String : '';
@@ -82,6 +186,10 @@ class Listing {
     final rawAreaId = json['areaId'];
     final rawRating = json['rating'];
     final rawBusinessId = json['businessId'];
+    final endsAt = _asDateTime(json['endsAt']);
+    final displayStatus = endsAt != null && endsAt.isAfter(DateTime.now())
+        ? 'Ends ${shortDate(endsAt)}'
+        : value('displayStatus');
 
     return Listing(
       id: value('id'),
@@ -105,9 +213,8 @@ class Listing {
       rating: rawRating is num ? rawRating.toDouble() : null,
       reviewCount: (json['reviewCount'] as num?)?.toInt() ?? 0,
       price: value('price'),
-      status: value('displayStatus').isNotEmpty
-          ? value('displayStatus')
-          : value('status'),
+      endsAt: endsAt,
+      status: displayStatus.isNotEmpty ? displayStatus : value('status'),
       description: value('description'),
       whyYoullLoveIt: value('whyYoullLoveIt'),
       perfectFor: strings('perfectFor'),
@@ -115,5 +222,17 @@ class Listing {
       pairedListingIds: strings('pairedListingIds'),
       continueDayIds: strings('continueDayIds'),
     );
+  }
+}
+
+/// Reads a Firestore Timestamp (or DateTime) without importing Firestore here.
+DateTime? _asDateTime(Object? value) {
+  if (value is DateTime) return value;
+  if (value == null) return null;
+  try {
+    final converted = (value as dynamic).toDate();
+    return converted is DateTime ? converted : null;
+  } catch (_) {
+    return null;
   }
 }

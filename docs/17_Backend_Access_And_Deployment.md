@@ -86,3 +86,13 @@ for `engagementReceipts` (field `expireAt`) is set in the Firebase Console.
 - TTL policy on `engagementReceipts.expireAt`.
 - `firestore.indexes.json` committed and deployed.
 - Rule tests passing before every rules deploy.
+
+## Storage rules tests
+
+Storage rules read the business's Firestore document, so the rules tests need both emulators:
+
+```
+firebase emulators:exec --only firestore,storage "npm --prefix rules-tests test"
+```
+
+Deploy Storage rules after Storage is enabled: `firebase deploy --only storage --project discoverease-dev`.

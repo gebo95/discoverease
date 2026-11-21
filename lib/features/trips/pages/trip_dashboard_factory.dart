@@ -89,15 +89,18 @@ class TripDashboardFactory {
                 initialDayIndex: safeSelectedDayIndex,
               );
             },
-            onAddToDay: () {
-              TripDashboardActions.planExperience(
-                context: context,
-                trip: trip,
-                listing: listing,
-                tripRepository: tripRepository,
-                initialDayIndex: safeSelectedDayIndex,
-              );
-            },
+            unavailableLabel: listing.unavailability?.label,
+            onAddToDay: listing.isUnavailable
+                ? null
+                : () {
+                    TripDashboardActions.planExperience(
+                      context: context,
+                      trip: trip,
+                      listing: listing,
+                      tripRepository: tripRepository,
+                      initialDayIndex: safeSelectedDayIndex,
+                    );
+                  },
           );
         })
         .whereType<DESavedForLaterItem>()

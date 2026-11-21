@@ -27,6 +27,7 @@ void showDEPlanExperienceSheet(
   required List<String> days,
   required PlanExperienceCallback onPlan,
   int initialDayIndex = 0,
+  String? Function(int dayIndex)? dayWarning,
 }) {
   showModalBottomSheet(
     context: context,
@@ -37,6 +38,7 @@ void showDEPlanExperienceSheet(
       days: days,
       onPlan: onPlan,
       initialDayIndex: initialDayIndex,
+      dayWarning: dayWarning,
     ),
   );
 }
@@ -47,12 +49,17 @@ class DEPlanExperienceSheet extends StatefulWidget {
   final PlanExperienceCallback onPlan;
   final int initialDayIndex;
 
+  /// Optional heads-up for the chosen day (for example, the experience ends
+  /// before it). It never blocks adding.
+  final String? Function(int dayIndex)? dayWarning;
+
   const DEPlanExperienceSheet({
     super.key,
     required this.experienceTitle,
     required this.days,
     required this.onPlan,
     this.initialDayIndex = 0,
+    this.dayWarning,
   });
 
   @override
@@ -80,6 +87,9 @@ class _DEPlanExperienceSheetState extends State<DEPlanExperienceSheet> {
         ? 0
         : widget.initialDayIndex.clamp(0, widget.days.length - 1);
   }
+
+  String? _dayNote() =>
+      widget.days.isEmpty ? null : widget.dayWarning?.call(selectedDay);
 
   @override
   void dispose() {
@@ -161,6 +171,11 @@ class _DEPlanExperienceSheetState extends State<DEPlanExperienceSheet> {
                   });
                 },
               ),
+
+              if (_dayNote() case final dayNote?) ...[
+                const SizedBox(height: DESpacing.sm),
+                _PlanWarning(message: dayNote),
+              ],
 
               const SizedBox(height: DESpacing.xl),
 
@@ -402,4 +417,30 @@ class _DEPlanExperienceSheetState extends State<DEPlanExperienceSheet> {
     return trimmed.isEmpty ? null : trimmed;
   }
 
+}
+
+class _PlanWarning extends StatelessWidget {
+  const _PlanWarning({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(DESpacing.sm),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(DERadius.medium),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline_rounded, size: 18, color: Colors.deepOrange),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message, style: const TextStyle(height: 1.3))),
+        ],
+      ),
+    );
+  }
 }

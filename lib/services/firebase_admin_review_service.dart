@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/business_profile.dart';
@@ -9,11 +10,33 @@ class FirebaseAdminReviewService {
   FirebaseAdminReviewService({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
   }) : _auth = auth ?? FirebaseAuth.instance,
-       _firestore = firestore ?? FirebaseFirestore.instance;
+       _firestore = firestore ?? FirebaseFirestore.instance,
+       _functions =
+           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
+  final FirebaseFunctions _functions;
+
+  /// Copies a submission's (or proposed change's) new photos from the private
+  /// folder to the public one and returns their public addresses, cover first.
+  /// Nothing about the experience changes until the review is saved.
+  Future<List<String>> _publishPhotos(
+    String businessId,
+    String experienceId,
+  ) async {
+    try {
+      final result = await _functions
+          .httpsCallable('publishExperiencePhotos')
+          .call({'businessId': businessId, 'experienceId': experienceId});
+      final data = Map<String, Object?>.from(result.data as Map);
+      return (data['photos'] as List).cast<String>();
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(error.message ?? 'Could not publish the photos.');
+    }
+  }
 
   Future<bool> isAdmin({bool refresh = false}) async {
     final user = _auth.currentUser;
@@ -64,6 +87,12 @@ class FirebaseAdminReviewService {
     final business = _firestore.collection('businesses').doc(businessId);
     final experienceRef = business.collection('experiences').doc(experience.id);
     final catalogRef = _firestore.collection('catalog').doc(experience.id);
+    // Photos are copied to the public folder first; the decision below only
+    // records them once the business and experience checks pass.
+    final List<String>? publishedPhotos =
+        approve && experience.photos.isNotEmpty
+        ? await _publishPhotos(businessId, experience.id)
+        : null;
     await _firestore.runTransaction((transaction) async {
       final businessSnapshot = await transaction.get(business);
       final experienceSnapshot = await transaction.get(experienceRef);
@@ -90,6 +119,10 @@ class FirebaseAdminReviewService {
         'reviewNote': approve ? '' : reviewNote.trim(),
         'reviewedAt': FieldValue.serverTimestamp(),
         'reviewedBy': _auth.currentUser?.uid,
+        if (publishedPhotos != null) ...{
+          'photos': publishedPhotos,
+          'imageUrl': publishedPhotos.isEmpty ? '' : publishedPhotos.first,
+        },
       });
       if (approve) {
         transaction.set(catalogRef, {
@@ -111,8 +144,12 @@ class FirebaseAdminReviewService {
           'phone': currentExperience.phone,
           'hours': currentExperience.hours,
           'schedule': currentExperience.schedule,
-          'imageUrl': currentExperience.imageUrl,
-          'gallery': <String>[],
+          'imageUrl': publishedPhotos != null && publishedPhotos.isNotEmpty
+              ? publishedPhotos.first
+              : currentExperience.imageUrl,
+          'gallery': publishedPhotos != null && publishedPhotos.length > 1
+              ? publishedPhotos.sublist(1)
+              : <String>[],
           'rating': null,
           'reviewCount': 0,
           'price': currentExperience.price,
@@ -147,6 +184,19 @@ class FirebaseAdminReviewService {
     final business = _firestore.collection('businesses').doc(businessId);
     final experienceRef = business.collection('experiences').doc(experienceId);
     final catalogRef = _firestore.collection('catalog').doc(experienceId);
+    // If the proposal includes photos, copy any new ones to the public folder
+    // first. The transaction below checks the proposal did not change meanwhile.
+    List<String>? publishedPhotos;
+    List<Object?>? requestedPhotos;
+    if (approve) {
+      final proposal = (await experienceRef.get()).data()?['pendingRevision'];
+      if (proposal is Map && proposal['photos'] is List) {
+        requestedPhotos = List<Object?>.from(proposal['photos'] as List);
+        publishedPhotos = requestedPhotos.isEmpty
+            ? <String>[]
+            : await _publishPhotos(businessId, experienceId);
+      }
+    }
     await _firestore.runTransaction((transaction) async {
       final businessSnapshot = await transaction.get(business);
       final experienceSnapshot = await transaction.get(experienceRef);
@@ -185,8 +235,28 @@ class FirebaseAdminReviewService {
         Map<String, Object?>.from(data['pendingRevision'] as Map),
       );
       final content = revision.toJson();
+      final photosNow = (data['pendingRevision'] as Map)['photos'];
+      if (requestedPhotos != null &&
+          (photosNow is! List ||
+              photosNow.length != requestedPhotos.length ||
+              !Iterable<int>.generate(
+                requestedPhotos.length,
+              ).every((i) => photosNow[i] == requestedPhotos![i]))) {
+        throw StateError(
+          'The proposed photos changed while you were reviewing. Open the review again.',
+        );
+      }
+      final photoFields = <String, Object?>{
+        if (publishedPhotos != null) ...{
+          'photos': publishedPhotos,
+          'imageUrl': publishedPhotos.isEmpty ? '' : publishedPhotos.first,
+        },
+      };
       transaction.update(experienceRef, {
-        ...content,
+        // A proposal from before photos existed has no photo list; it must
+        // not wipe the photos the experience already has.
+        ...(Map<String, Object?>.of(content)..remove('photos')),
+        ...photoFields,
         'pendingRevision': FieldValue.delete(),
         'revisionStatus': FieldValue.delete(),
         'revisionNote': FieldValue.delete(),
@@ -199,7 +269,15 @@ class FirebaseAdminReviewService {
       // Only the reviewed content changes; publishedAt, ratings and the rest
       // of the public listing are left alone.
       transaction.update(catalogRef, {
-        ...content,
+        ...(Map<String, Object?>.of(content)
+          ..remove('photos')
+          ..remove('imageUrl')),
+        if (publishedPhotos != null) ...{
+          'imageUrl': publishedPhotos.isEmpty ? '' : publishedPhotos.first,
+          'gallery': publishedPhotos.length > 1
+              ? publishedPhotos.sublist(1)
+              : <String>[],
+        },
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });

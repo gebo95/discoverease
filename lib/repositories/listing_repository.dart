@@ -7,10 +7,21 @@ class ListingRepository extends ChangeNotifier {
   ListingRepository();
 
   List<Listing> _published = const [];
+  Map<String, Listing> _unavailable = const {};
 
   /// Replaces only the remote published records; local curated listings remain.
   void setPublishedListings(Iterable<Listing> listings) {
     _published = List.unmodifiable(listings);
+    notifyListeners();
+  }
+
+  /// Stand-ins for listings that travelers saved or planned but that are no
+  /// longer public. They are found by [getById] only and never appear in
+  /// search, browsing or recommendations.
+  void setUnavailableListings(Iterable<Listing> listings) {
+    _unavailable = Map.unmodifiable({
+      for (final listing in listings) listing.id: listing,
+    });
     notifyListeners();
   }
 
@@ -253,7 +264,7 @@ class ListingRepository extends ChangeNotifier {
     try {
       return getAll().firstWhere((listing) => listing.id == id);
     } catch (_) {
-      return null;
+      return _unavailable[id];
     }
   }
 }

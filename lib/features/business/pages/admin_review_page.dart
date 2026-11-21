@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/business_profile.dart';
+import '../../../services/experience_photo_service.dart';
 import '../../../services/firebase_admin_review_service.dart';
+import '../../../shared/utils/photo_files.dart';
 
 class AdminReviewPage extends StatefulWidget {
   const AdminReviewPage({super.key});
@@ -125,6 +127,9 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
       title: experience.title,
       details: details,
       reviewNote: experience.reviewNote,
+      extra: experience.photos.isEmpty
+          ? null
+          : _PhotoStrip(label: 'Photos (first is the cover)', entries: experience.photos),
       working: _working == 'experience:${document.id}',
       onApprove: () => _runReview(
         key: 'experience:${document.id}',
@@ -170,9 +175,22 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
       for (final change in changes)
         '${change.label}\n  Now: ${shown(change.before)}\n  Proposed: ${shown(change.after)}',
     ].join('\n\n');
+    final photosChanged = !samePhotoSet(experience.photos, revision.photos);
     return _ReviewCard(
       title: '${experience.title} (edit)',
       details: details,
+      extra: !photosChanged
+          ? null
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _PhotoStrip(label: 'Photos now', entries: experience.photos),
+                _PhotoStrip(
+                  label: 'Proposed photos (first is the cover)',
+                  entries: revision.photos,
+                ),
+              ],
+            ),
       working: _working == 'revision:${document.id}',
       onApprove: () => _runReview(
         key: 'revision:${document.id}',
@@ -295,6 +313,7 @@ class _ReviewCard extends StatelessWidget {
     required this.title,
     required this.details,
     this.reviewNote = '',
+    this.extra,
     required this.working,
     required this.onApprove,
     required this.onReject,
@@ -302,6 +321,9 @@ class _ReviewCard extends StatelessWidget {
   final String title;
   final String details;
   final String reviewNote;
+
+  /// Optional content shown under the details, such as photos.
+  final Widget? extra;
   final bool working;
   final VoidCallback onApprove;
   final VoidCallback onReject;
@@ -317,6 +339,7 @@ class _ReviewCard extends StatelessWidget {
           Text(title, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           Text(details.isEmpty ? 'No additional contact details provided.' : details),
+          if (extra != null) ...[const SizedBox(height: 12), extra!],
           if (reviewNote.trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text('Previous review feedback: $reviewNote'),
@@ -345,4 +368,108 @@ class _Message extends StatelessWidget {
   Widget build(BuildContext context) => Center(
     child: Padding(padding: const EdgeInsets.all(24), child: Text(message, textAlign: TextAlign.center)),
   );
+}
+
+/// A row of photo thumbnails for reviewers. Not-yet-approved photos come from
+/// the private upload folder, which reviewers are allowed to read.
+class _PhotoStrip extends StatelessWidget {
+  const _PhotoStrip({required this.label, required this.entries});
+
+  final String label;
+  final List<String> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    final service = context.read<ExperiencePhotoService>();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 6),
+          if (entries.isEmpty)
+            const Text('(none)')
+          else
+            SizedBox(
+              height: 96,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: entries.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) => _ReviewPhoto(
+                  entry: entries[index],
+                  service: service,
+                  badge: index == 0 ? 'Cover' : (isPendingPhoto(entries[index]) ? 'New' : null),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewPhoto extends StatefulWidget {
+  const _ReviewPhoto({required this.entry, required this.service, this.badge});
+
+  final String entry;
+  final ExperiencePhotoService service;
+  final String? badge;
+
+  @override
+  State<_ReviewPhoto> createState() => _ReviewPhotoState();
+}
+
+class _ReviewPhotoState extends State<_ReviewPhoto> {
+  late final Future<String> _url = widget.service.urlFor(widget.entry);
+
+  @override
+  Widget build(BuildContext context) {
+    const broken = ColoredBox(
+      color: Color(0x11000000),
+      child: Center(child: Icon(Icons.image_not_supported_outlined)),
+    );
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: FutureBuilder<String>(
+              future: _url,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) return broken;
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                }
+                return Image.network(
+                  snapshot.data!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => broken,
+                );
+              },
+            ),
+          ),
+          if (widget.badge != null)
+            Positioned(
+              left: 4,
+              bottom: 4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  widget.badge!,
+                  style: const TextStyle(color: Colors.white, fontSize: 10),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

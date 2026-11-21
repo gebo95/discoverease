@@ -33,7 +33,8 @@ service cloud.firestore {
         && (!('hours' in data) || (data.hours is string && data.hours.size() <= 300))
         && (!('schedule' in data) || (data.schedule is string && data.schedule.size() <= 300))
         && (!('website' in data) || validWebLink(data.website))
-        && (!('bookingUrl' in data) || validWebLink(data.bookingUrl));
+        && (!('bookingUrl' in data) || validWebLink(data.bookingUrl))
+        && (!('photos' in data) || (data.photos is list && data.photos.size() <= 5));
     }
 
     // A proposed change to a live experience. It may only contain reviewable
@@ -44,7 +45,7 @@ service cloud.firestore {
         && rev.keys().hasOnly([
           'title', 'description', 'category', 'subcategory', 'destinationId',
           'destination', 'location', 'price', 'imageUrl', 'address', 'website',
-          'bookingUrl', 'phone', 'hours', 'schedule'
+          'bookingUrl', 'phone', 'hours', 'schedule', 'photos'
         ])
         && rev.keys().hasAll([
           'title', 'description', 'category', 'subcategory', 'destinationId',
@@ -203,7 +204,8 @@ service cloud.firestore {
               'schemaVersion', 'id', 'title', 'description', 'category',
               'subcategory', 'destinationId', 'destination', 'location',
               'price', 'imageUrl', 'status', 'createdAt', 'updatedAt',
-              'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
+              'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
+              'photos'
             ])
             && validExperienceDetails(request.resource.data));
         allow update: if isAdmin()
@@ -217,7 +219,9 @@ service cloud.firestore {
               'reviewNote', 'reviewedAt', 'reviewedBy',
               'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
               'pendingRevision', 'revisionStatus', 'revisionNote',
-              'revisionSubmittedAt'
+              'revisionSubmittedAt',
+              'availability', 'availabilityMessage', 'availabilityChangedAt',
+              'endsAt', 'photos'
             ])
             && validExperienceDetails(request.resource.data)
             && (
@@ -228,7 +232,8 @@ service cloud.firestore {
                     'title', 'description', 'category', 'subcategory',
                     'destinationId', 'destination', 'location', 'price',
                     'imageUrl', 'updatedAt',
-                    'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
+                    'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
+                    'photos'
                   ]))
               || (resource.data.status == 'rejected'
                 && request.resource.data.status == 'pending_review'
@@ -241,7 +246,8 @@ service cloud.firestore {
                     'destinationId', 'destination', 'location', 'price',
                     'imageUrl', 'updatedAt', 'status', 'reviewNote',
                     'reviewedAt', 'reviewedBy',
-                    'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule'
+                    'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
+                    'photos'
                   ]))
               // Live experiences are never edited directly. The owner can only
               // propose a revision (or withdraw one); an admin applies it.
@@ -280,6 +286,14 @@ service cloud.firestore {
     match /catalog/{experienceId} {
       allow get, list: if resource.data.status == 'published';
       allow create, update, delete: if isAdmin();
+    }
+
+    // Short public notice left behind when a listing is hidden, ended or
+    // removed, so travelers who saved it see why. Holds nothing private and is
+    // written only by Cloud Functions, never by a client.
+    match /unavailable/{listingId} {
+      allow get, list: if true;
+      allow create, update, delete: if false;
     }
 
     match /businesses/{businessId}/analytics/{listingId} {

@@ -1,3 +1,4 @@
+import '../shared/utils/photo_files.dart';
 import '../shared/utils/web_link.dart';
 
 class BusinessProfile {
@@ -68,6 +69,10 @@ class BusinessExperience {
     this.revision,
     this.revisionStatus = '',
     this.revisionNote = '',
+    this.availability = 'live',
+    this.availabilityMessage = '',
+    this.endsAt,
+    this.photos = const [],
   });
 
   final String id;
@@ -77,6 +82,25 @@ class BusinessExperience {
   final String subcategory;
   final String destinationId;
   final String destination;
+
+  /// Photos, cover first. Entries are public web addresses once approved, or
+  /// private upload paths while still waiting for review. [imageUrl] mirrors
+  /// the cover once approved.
+  final List<String> photos;
+
+  /// 'live', 'hidden' (owner paused it) or 'ended' (its end date passed).
+  /// Only meaningful once the experience is published; changed by a Cloud
+  /// Function, never written by the app directly.
+  final String availability;
+
+  /// Optional note shown to travelers who saved a hidden experience.
+  final String availabilityMessage;
+
+  /// When the experience stops being offered, if it has an end date.
+  final DateTime? endsAt;
+
+  bool get isHidden => availability == 'hidden';
+  bool get hasEnded => availability == 'ended';
 
   /// Area or neighborhood shown on cards (for example "Paradise Island").
   final String location;
@@ -130,6 +154,7 @@ class BusinessExperience {
     'phone': phone,
     'hours': hours,
     'schedule': schedule,
+    'photos': photos,
   };
 
   factory BusinessExperience.fromJson(Map<String, Object?> json) {
@@ -163,7 +188,30 @@ class BusinessExperience {
           : null,
       revisionStatus: json['revisionStatus'] as String? ?? '',
       revisionNote: json['revisionNote'] as String? ?? '',
+      availability: _availability(json['availability']),
+      availabilityMessage: json['availabilityMessage'] as String? ?? '',
+      endsAt: _dateTime(json['endsAt']),
+      photos: _photoList(json['photos']),
     );
+  }
+}
+
+List<String> _photoList(Object? value) =>
+    value is List ? value.whereType<String>().toList(growable: false) : const [];
+
+String _availability(Object? value) =>
+    value == 'hidden' || value == 'ended' ? value! as String : 'live';
+
+/// Reads a Firestore Timestamp (or a DateTime) without importing Firestore
+/// into the model layer.
+DateTime? _dateTime(Object? value) {
+  if (value is DateTime) return value;
+  if (value == null) return null;
+  try {
+    final converted = (value as dynamic).toDate();
+    return converted is DateTime ? converted : null;
+  } catch (_) {
+    return null;
   }
 }
 
@@ -200,6 +248,7 @@ class ExperienceRevision {
     this.phone = '',
     this.hours = '',
     this.schedule = '',
+    this.photos = const [],
   });
 
   factory ExperienceRevision.fromExperience(BusinessExperience experience) =>
@@ -219,6 +268,7 @@ class ExperienceRevision {
         phone: experience.phone,
         hours: experience.hours,
         schedule: experience.schedule,
+        photos: experience.photos,
       );
 
   factory ExperienceRevision.fromJson(Map<String, Object?> json) {
@@ -239,6 +289,7 @@ class ExperienceRevision {
       phone: text('phone'),
       hours: text('hours'),
       schedule: text('schedule'),
+      photos: _photoList(json['photos']),
     );
   }
 
@@ -258,6 +309,9 @@ class ExperienceRevision {
   final String hours;
   final String schedule;
 
+  /// Proposed photos, cover first (see [BusinessExperience.photos]).
+  final List<String> photos;
+
   Map<String, Object?> toJson() => {
     'title': title,
     'description': description,
@@ -274,6 +328,7 @@ class ExperienceRevision {
     'phone': phone,
     'hours': hours,
     'schedule': schedule,
+    'photos': photos,
   };
 
   /// Trimmed text with web links in their stored form, so comparing and
@@ -294,6 +349,7 @@ class ExperienceRevision {
     phone: phone.trim(),
     hours: hours.trim(),
     schedule: schedule.trim(),
+    photos: photos,
   );
 
   /// What this revision would change on [live], in a form a reviewer can read.
@@ -321,6 +377,21 @@ class ExperienceRevision {
     compare('Booking link', current.bookingUrl, proposed.bookingUrl);
     compare('Hours', current.hours, proposed.hours);
     compare('Schedule', current.schedule, proposed.schedule);
+    // Putting the same photos in a different order only changes the cover,
+    // which needs no review, so only added or removed photos count.
+    if (!samePhotoSet(current.photos, proposed.photos)) {
+      final added = proposed.photos.where(isPendingPhoto).length;
+      String count(int n) => n == 1 ? '1 photo' : '$n photos';
+      changes.add(
+        RevisionChange(
+          label: 'Photos',
+          before: count(current.photos.length),
+          after:
+              '${count(proposed.photos.length)}'
+              '${added > 0 ? ' ($added new)' : ''}',
+        ),
+      );
+    }
     return changes;
   }
 }

@@ -44,23 +44,22 @@ class DEExperienceCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Hero(
-                tag: "listing-image-${listing.id}",
-                child: Image.network(
-                  listing.imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const ColoredBox(
-                      color: DEColors.border,
-                      child: Center(
-                        child: Icon(
-                          Icons.image_not_supported_outlined,
-                          color: DEColors.textSecondary,
-                        ),
+              // No Hero here: the same listing can appear in several home
+              // sections at once, and two Heroes with one tag break navigation.
+              Image.network(
+                listing.imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return const ColoredBox(
+                    color: DEColors.border,
+                    child: Center(
+                      child: Icon(
+                        Icons.image_not_supported_outlined,
+                        color: DEColors.textSecondary,
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
               ),
 
               Positioned.fill(

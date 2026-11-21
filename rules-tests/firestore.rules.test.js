@@ -474,3 +474,144 @@ test('a user cannot read another user trips', async () => {
   await assertFails(getDoc(doc(asUser('u2'), 'users/u1/trips/t1')));
   await assertSucceeds(getDoc(doc(asUser('u1'), 'users/u1/trips/t1')));
 });
+
+// ------------------------------------------------------------- availability
+
+test('anyone can read an unavailable notice but no client can write one', async () => {
+  await seed((db) =>
+    setDoc(doc(db, 'unavailable/sunset'), { listingId: 'sunset', title: 'Sunset Cruise', reason: 'temporary', message: '' }),
+  );
+  await assertSucceeds(getDoc(doc(signedOut(), 'unavailable/sunset')));
+  await assertSucceeds(getDoc(doc(asUser('u1'), 'unavailable/sunset')));
+  await assertFails(setDoc(doc(asUser('biz-1'), 'unavailable/new'), { listingId: 'new', reason: 'temporary' }));
+  await assertFails(updateDoc(doc(asUser('biz-1'), 'unavailable/sunset'), { reason: 'removed' }));
+  await assertFails(deleteDoc(doc(asUser('biz-1'), 'unavailable/sunset')));
+  await assertFails(setDoc(doc(asAdmin(), 'unavailable/new'), { listingId: 'new', reason: 'temporary' }));
+});
+
+test('an owner cannot hide, end or relist a live experience directly', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1', { status: 'published' }));
+    await setDoc(doc(db, 'businesses/biz-1/experiences/exp-1'), experienceDoc('exp-1', { status: 'published' }));
+  });
+  const ref = doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-1');
+  await assertFails(updateDoc(ref, { availability: 'hidden', updatedAt: now() }));
+  await assertFails(updateDoc(ref, { endsAt: now(), updatedAt: now() }));
+  await assertFails(updateDoc(ref, { availability: 'live', updatedAt: now() }));
+});
+
+test('an owner can still edit a pending experience that has an end date', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1'));
+    await setDoc(
+      doc(db, 'businesses/biz-1/experiences/exp-1'),
+      experienceDoc('exp-1', { endsAt: new Date(Date.now() + 86400000) }),
+    );
+  });
+  await assertSucceeds(
+    updateDoc(doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-1'), {
+      title: 'Sunset Cruise 2',
+      updatedAt: now(),
+    }),
+  );
+});
+
+test('an owner can still propose a revision to a hidden live experience', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1', { status: 'published' }));
+    await setDoc(
+      doc(db, 'businesses/biz-1/experiences/exp-1'),
+      experienceDoc('exp-1', { status: 'published', availability: 'hidden', availabilityMessage: 'Back soon' }),
+    );
+  });
+  const live = experienceDoc('exp-1');
+  await assertSucceeds(
+    updateDoc(doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-1'), {
+      pendingRevision: {
+        title: 'Sunset Cruise Deluxe',
+        description: live.description,
+        category: live.category,
+        subcategory: live.subcategory,
+        destinationId: live.destinationId,
+        destination: live.destination,
+        location: live.location,
+        price: live.price,
+        imageUrl: live.imageUrl,
+      },
+      revisionStatus: 'pending_review',
+      revisionNote: '',
+      revisionSubmittedAt: serverTimestamp(),
+      updatedAt: now(),
+    }),
+  );
+});
+
+test('a hidden catalog listing is not readable by the public', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'catalog/exp-1'), { status: 'hidden', title: 'Sunset Cruise' });
+    await setDoc(doc(db, 'catalog/exp-2'), { status: 'published', title: 'Kayak' });
+  });
+  await assertFails(getDoc(doc(signedOut(), 'catalog/exp-1')));
+  await assertSucceeds(getDoc(doc(signedOut(), 'catalog/exp-2')));
+});
+
+// ------------------------------------------------------------------- photos
+
+test('an owner can propose photos in a revision but not write them to a live experience', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1', { status: 'published' }));
+    await setDoc(
+      doc(db, 'businesses/biz-1/experiences/exp-1'),
+      experienceDoc('exp-1', { status: 'published', photos: [] }),
+    );
+  });
+  const live = experienceDoc('exp-1');
+  const revision = (photos) => ({
+    title: live.title,
+    description: live.description,
+    category: live.category,
+    subcategory: live.subcategory,
+    destinationId: live.destinationId,
+    destination: live.destination,
+    location: live.location,
+    price: live.price,
+    imageUrl: live.imageUrl,
+    photos,
+  });
+  const proposal = (photos) => ({
+    pendingRevision: revision(photos),
+    revisionStatus: 'pending_review',
+    revisionNote: '',
+    revisionSubmittedAt: serverTimestamp(),
+    updatedAt: now(),
+  });
+  const ref = doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-1');
+  await assertSucceeds(updateDoc(ref, proposal(['pending/biz-1/exp-1/a1.jpg'])));
+  const tooMany = Array.from({ length: 6 }, (_, i) => `pending/biz-1/exp-1/p${i}.jpg`);
+  await assertFails(updateDoc(ref, proposal(tooMany)));
+  await assertFails(updateDoc(ref, { photos: ['pending/biz-1/exp-1/a1.jpg'], updatedAt: now() }));
+  await assertFails(updateDoc(ref, { imageUrl: 'https://example.com/x.jpg', updatedAt: now() }));
+});
+
+test('an owner can attach photos to a pending submission', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1'));
+    await setDoc(doc(db, 'businesses/biz-1/experiences/exp-1'), experienceDoc('exp-1'));
+  });
+  const owner = asUser('biz-1');
+  await assertSucceeds(
+    updateDoc(doc(owner, 'businesses/biz-1/experiences/exp-1'), {
+      photos: ['pending/biz-1/exp-1/a1.jpg', 'pending/biz-1/exp-1/a2.png'],
+      updatedAt: now(),
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(owner, 'businesses/biz-1/experiences/exp-1'), {
+      photos: 'not a list',
+      updatedAt: now(),
+    }),
+  );
+  await assertSucceeds(
+    setDoc(doc(owner, 'businesses/biz-1/experiences/exp-2'), experienceDoc('exp-2', { photos: ['pending/biz-1/exp-2/b.jpg'] })),
+  );
+});
