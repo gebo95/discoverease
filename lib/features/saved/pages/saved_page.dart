@@ -442,7 +442,9 @@ class _SavedListingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Opacity(
+      opacity: listing.isUnavailable ? 0.6 : 1,
+      child: Container(
       margin: const EdgeInsets.only(bottom: DESpacing.md),
       decoration: BoxDecoration(
         color: DEColors.surface,
@@ -486,12 +488,31 @@ class _SavedListingCard extends StatelessWidget {
                         style: const TextStyle(fontWeight: FontWeight.w900),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        '${listing.location} · ${listing.price}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: DEColors.textSecondary),
-                      ),
+                      if (listing.unavailability != null) ...[
+                        Text(
+                          listing.unavailability!.label,
+                          style: const TextStyle(
+                            color: DEColors.textSecondary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (listing.unavailability!.message.isNotEmpty)
+                          Text(
+                            '"${listing.unavailability!.message}"',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: DEColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                      ] else
+                        Text(
+                          '${listing.location} · ${listing.price}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: DEColors.textSecondary),
+                        ),
                       const SizedBox(height: 4),
                       Text(
                         category,
@@ -519,6 +540,7 @@ class _SavedListingCard extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

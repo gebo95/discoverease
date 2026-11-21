@@ -3,7 +3,11 @@ const { FieldValue, Timestamp, getFirestore } = require('firebase-admin/firestor
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { HttpsError, onCall } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { getStorage } = require('firebase-admin/storage');
 const logger = require('firebase-functions/logger');
+const { planTransition } = require('./availability_logic');
+const { planPhotoPublish, planSetCover } = require('./photos_logic');
 const {
   SHARE_DAILY_CAP,
   digest,
@@ -236,4 +240,291 @@ exports.aggregateBusinessSaves = onDocumentWritten(
 exports.aggregateBusinessLikes = onDocumentWritten(
   'users/{userId}/likes/{listingId}',
   (event) => processLikeOrSave(event, 'likes'),
+);
+
+// ---------------------------------------------------------------------------
+// Hiding, restoring, deleting and ending live experiences.
+//
+// The public catalog entry and the small `unavailable` notice that travelers
+// who saved the place can read are changed together with the experience, in
+// one transaction. Clients never write any of them directly.
+// ---------------------------------------------------------------------------
+
+async function assertOwnsBusiness(request, businessId, transaction) {
+  const uid = requireUid(request);
+  const token = request.auth.token || {};
+  if (token.admin === true || token.business_id === businessId) return;
+  const business = await transaction.get(db.collection('businesses').doc(businessId));
+  if (!business.exists || business.data().ownerUid !== uid) {
+    throw new HttpsError('permission-denied', 'You can only manage your own experiences.');
+  }
+}
+
+// Applies one planned change atomically. `authorize` runs inside the
+// transaction so ownership is checked against the same data being changed.
+async function applyAvailabilityChange({
+  businessId,
+  experienceId,
+  action,
+  message,
+  endsAt,
+  now,
+  authorize,
+}) {
+  const experienceRef = db
+    .collection('businesses').doc(businessId)
+    .collection('experiences').doc(experienceId);
+  const catalogRef = db.collection('catalog').doc(experienceId);
+  const unavailableRef = db.collection('unavailable').doc(experienceId);
+
+  return db.runTransaction(async (transaction) => {
+    if (authorize) await authorize(transaction);
+    const [experienceSnap, catalogSnap] = await Promise.all([
+      transaction.get(experienceRef),
+      transaction.get(catalogRef),
+    ]);
+    const experience = experienceSnap.exists ? experienceSnap.data() : null;
+    const plan = planTransition({ action, experience, message, endsAt, now });
+    if (!plan.ok) throw new HttpsError(plan.code, plan.message);
+
+    if (plan.deleteExperience) {
+      transaction.delete(experienceRef);
+      if (catalogSnap.exists) transaction.delete(catalogRef);
+    } else {
+      const update = { ...plan.experienceSet, updatedAt: FieldValue.serverTimestamp() };
+      if (plan.experienceSet.availability) {
+        update.availabilityChangedAt = FieldValue.serverTimestamp();
+      }
+      if (plan.experienceSet.endsAt) {
+        update.endsAt = Timestamp.fromDate(plan.experienceSet.endsAt);
+      }
+      for (const field of plan.experienceClear) update[field] = FieldValue.delete();
+      transaction.update(experienceRef, update);
+      if (catalogSnap.exists) {
+        // The public listing carries the end date so cards and trip planning
+        // can show it.
+        const catalogUpdate = {};
+        if (plan.catalogStatus) catalogUpdate.status = plan.catalogStatus;
+        if (plan.experienceSet.endsAt) {
+          catalogUpdate.endsAt = Timestamp.fromDate(plan.experienceSet.endsAt);
+        }
+        if (plan.experienceClear.includes('endsAt')) {
+          catalogUpdate.endsAt = FieldValue.delete();
+        }
+        if (Object.keys(catalogUpdate).length > 0) {
+          transaction.update(catalogRef, catalogUpdate);
+        }
+      }
+    }
+
+    if (plan.unavailable) {
+      const source = catalogSnap.exists ? catalogSnap.data() : experience;
+      transaction.set(unavailableRef, {
+        listingId: experienceId,
+        title: source?.title || '',
+        imageUrl: source?.imageUrl || '',
+        destination: source?.destination || '',
+        destinationId: source?.destinationId || '',
+        category: source?.category || '',
+        subcategory: source?.subcategory || '',
+        location: source?.location || '',
+        areaId: typeof source?.areaId === 'string' ? source.areaId : null,
+        reason: plan.unavailable.reason,
+        message: plan.unavailable.message,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    } else if (plan.catalogStatus === 'published' || plan.deleteExperience) {
+      transaction.delete(unavailableRef);
+    }
+    return { ok: true };
+  });
+}
+
+function parseEndsAt(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return new Date(NaN);
+  return new Date(value);
+}
+
+exports.manageExperience = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    const data = request.data || {};
+    const { businessId, experienceId, action } = data;
+    if (!isValidListingId(businessId) || !isValidListingId(experienceId)) {
+      throw new HttpsError('invalid-argument', 'A business and experience are required.');
+    }
+    if (!['hide', 'unhide', 'delete', 'set_end_date', 'set_cover'].includes(action)) {
+      throw new HttpsError('invalid-argument', 'Unknown action.');
+    }
+    if (action === 'set_cover') {
+      return setCover({ request, businessId, experienceId, photoUrl: data.photoUrl });
+    }
+    // Delete is permanent; a deleted experience that was never public is
+    // handled by the same path and simply leaves no traveler notice.
+    try {
+      return await applyAvailabilityChange({
+        businessId,
+        experienceId,
+        action,
+        message: data.message,
+        endsAt: action === 'set_end_date' ? parseEndsAt(data.endsAt) : undefined,
+        now: new Date(),
+        authorize: (transaction) => assertOwnsBusiness(request, businessId, transaction),
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to change experience availability.', {
+        action,
+        experienceId,
+        error: error?.stack || String(error),
+      });
+      throw new HttpsError('internal', 'Could not update this experience.');
+    }
+  },
+);
+
+// Hourly sweep: anything live whose end date has passed is taken off the
+// public list and marked "Ended" for the business and for travelers who saved
+// it. Uses the existing collection-group index on `status`; the end date is
+// checked here so no extra index is needed while volumes are small.
+exports.endExpiredExperiences = onSchedule(
+  { schedule: 'every 60 minutes', timeZone: 'UTC' },
+  async () => {
+    const now = new Date();
+    const snapshot = await db
+      .collectionGroup('experiences')
+      .where('status', '==', 'published')
+      .get();
+    let ended = 0;
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const endsAt = data.endsAt?.toDate?.();
+      if (!endsAt || endsAt > now || data.availability === 'ended') continue;
+      const businessId = doc.ref.parent.parent.id;
+      try {
+        await applyAvailabilityChange({
+          businessId,
+          experienceId: doc.id,
+          action: 'end',
+          now,
+        });
+        ended += 1;
+      } catch (error) {
+        logger.error('Failed to end an expired experience.', {
+          experienceId: doc.id,
+          error: error?.stack || String(error),
+        });
+      }
+    }
+    logger.info('Ended expired experiences.', { ended });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Photos. Owners upload to a private `pending/` folder. Only an admin's
+// approval copies a photo to `public/`, so an unapproved photo is never
+// reachable by travelers. Changing which approved photo is the cover only
+// reorders photos that were already approved, so it needs no review.
+// ---------------------------------------------------------------------------
+
+async function setCover({ request, businessId, experienceId, photoUrl }) {
+  const experienceRef = db
+    .collection('businesses').doc(businessId)
+    .collection('experiences').doc(experienceId);
+  const catalogRef = db.collection('catalog').doc(experienceId);
+  try {
+    return await db.runTransaction(async (transaction) => {
+      await assertOwnsBusiness(request, businessId, transaction);
+      const [experienceSnap, catalogSnap] = await Promise.all([
+        transaction.get(experienceRef),
+        transaction.get(catalogRef),
+      ]);
+      if (!experienceSnap.exists) {
+        throw new HttpsError('not-found', 'This experience no longer exists.');
+      }
+      const plan = planSetCover({
+        livePhotos: experienceSnap.data().photos,
+        photoUrl,
+      });
+      if (!plan.ok) throw new HttpsError('invalid-argument', plan.message);
+      transaction.update(experienceRef, {
+        photos: plan.photos,
+        imageUrl: plan.photos[0],
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      if (catalogSnap.exists) {
+        transaction.update(catalogRef, {
+          imageUrl: plan.photos[0],
+          gallery: plan.photos.slice(1),
+        });
+      }
+      return { ok: true };
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    logger.error('Failed to set the cover photo.', {
+      experienceId,
+      error: error?.stack || String(error),
+    });
+    throw new HttpsError('internal', 'Could not change the cover photo.');
+  }
+}
+
+// Admin-only. Copies the photos in a submission or proposed change from the
+// private folder to the public one and returns their public urls, cover first.
+// It does not change any Firestore document: the admin's review writes the
+// urls. Nothing is deleted here, so a failed review loses nothing.
+exports.publishExperiencePhotos = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    requireUid(request);
+    if (request.auth.token.admin !== true) {
+      throw new HttpsError('permission-denied', 'Only reviewers can publish photos.');
+    }
+    const { businessId, experienceId } = request.data || {};
+    if (!isValidListingId(businessId) || !isValidListingId(experienceId)) {
+      throw new HttpsError('invalid-argument', 'A business and experience are required.');
+    }
+    const snap = await db
+      .collection('businesses').doc(businessId)
+      .collection('experiences').doc(experienceId).get();
+    if (!snap.exists) throw new HttpsError('not-found', 'This experience no longer exists.');
+    const data = snap.data();
+
+    let requested;
+    if (data.status === 'published'
+        && data.revisionStatus === 'pending_review'
+        && data.pendingRevision) {
+      requested = data.pendingRevision.photos;
+    } else if (data.status === 'pending_review') {
+      requested = data.photos;
+    } else {
+      throw new HttpsError('failed-precondition', 'Nothing is waiting for review.');
+    }
+
+    const bucket = getStorage().bucket();
+    const plan = planPhotoPublish({
+      businessId,
+      experienceId,
+      requested: requested || [],
+      livePhotos: data.photos,
+      bucketName: bucket.name,
+    });
+    if (!plan.ok) throw new HttpsError('invalid-argument', plan.message);
+
+    try {
+      for (const entry of plan.entries) {
+        if (entry.kind !== 'copy') continue;
+        await bucket.file(entry.from).copy(bucket.file(entry.to));
+      }
+    } catch (error) {
+      logger.error('Failed to publish experience photos.', {
+        experienceId,
+        error: error?.stack || String(error),
+      });
+      throw new HttpsError('internal', 'Could not publish the photos. Make sure each one finished uploading.');
+    }
+    return { photos: plan.urls };
+  },
 );

@@ -12,11 +12,13 @@ import 'repositories/pulse_repository.dart';
 import 'app.dart';
 import 'repositories/destination_repository.dart';
 import 'firebase_options_dev.dart';
+import 'services/experience_photo_service.dart';
 import 'services/firebase_account_service.dart';
 import 'services/firebase_user_data_store.dart';
 import 'services/account_sync_coordinator.dart';
 import 'services/firebase_business_service.dart';
 import 'services/firebase_catalog_sync_service.dart';
+import 'services/firebase_unavailability_sync_service.dart';
 import 'services/firebase_admin_review_service.dart';
 import 'services/firebase_engagement_service.dart';
 
@@ -32,6 +34,7 @@ Future<void> main() async {
         Provider(create: (_) => FirebaseAccountService()),
         Provider(create: (_) => FirebaseUserDataStore()),
         Provider(create: (_) => FirebaseBusinessService()),
+        Provider(create: (_) => ExperiencePhotoService()),
         Provider(create: (_) => FirebaseAdminReviewService()),
         Provider(create: (_) => FirebaseEngagementService()),
         ChangeNotifierProvider(create: (_) => ListingRepository()),
@@ -44,6 +47,15 @@ Future<void> main() async {
         ),
         ChangeNotifierProvider(create: (_) => SavedRepository()),
         ChangeNotifierProvider(create: (_) => TripRepository()),
+        Provider(
+          lazy: false,
+          create: (context) => FirebaseUnavailabilitySyncService(
+            listings: context.read<ListingRepository>(),
+            saved: context.read<SavedRepository>(),
+            trips: context.read<TripRepository>(),
+          )..start(),
+          dispose: (_, service) => service.dispose(),
+        ),
         ChangeNotifierProvider(
           create: (context) => PulseRepository(
             tripRepository: context.read<TripRepository>(),

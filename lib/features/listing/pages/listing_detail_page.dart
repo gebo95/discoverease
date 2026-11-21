@@ -44,7 +44,7 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
         'businessListing=$isBusinessListing, signedIn=$isSignedIn',
       );
     }
-    if (isBusinessListing && isSignedIn) {
+    if (isBusinessListing && isSignedIn && !listing.isUnavailable) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           unawaited(
@@ -68,14 +68,14 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
     final pairedListings = listing.pairedListingIds
         .map(listingRepository.getById)
         .whereType<Listing>()
-        .where((item) => relatedListingIds.add(item.id))
+        .where((item) => !item.isUnavailable && relatedListingIds.add(item.id))
         .take(2)
         .toList();
 
     final continueDayListings = listing.continueDayIds
         .map(listingRepository.getById)
         .whereType<Listing>()
-        .where((item) => relatedListingIds.add(item.id))
+        .where((item) => !item.isUnavailable && relatedListingIds.add(item.id))
         .take(3)
         .toList();
 
@@ -87,7 +87,9 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
           _HeroGallery(
             listing: listing,
             isSaved: isSaved,
-            onSave: () => _toggleSaved(context, savedRepository),
+            onSave: listing.isUnavailable && !isSaved
+                ? () {}
+                : () => _toggleSaved(context, savedRepository),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(
@@ -99,6 +101,10 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (listing.unavailability != null) ...[
+                  _UnavailableBanner(unavailability: listing.unavailability!),
+                  const SizedBox(height: DESpacing.md),
+                ],
                 Text(
                   listing.title,
                   style: const TextStyle(
@@ -242,7 +248,25 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
           ),
         ],
       ),
-      bottomNavigationBar: SafeArea(
+      bottomNavigationBar: listing.isUnavailable
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(DESpacing.md),
+                child: OutlinedButton.icon(
+                  onPressed: isSaved
+                      ? () => _toggleSaved(context, savedRepository)
+                      : null,
+                  icon: const Icon(Icons.favorite_border),
+                  label: Text(isSaved ? 'Remove from saved' : 'Not available'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: DEColors.textPrimary,
+                    side: const BorderSide(color: DEColors.border),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                ),
+              ),
+            )
+          : SafeArea(
         child: Container(
           padding: const EdgeInsets.all(DESpacing.md),
           decoration: BoxDecoration(
@@ -424,6 +448,7 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
       context,
       experienceTitle: listing.title,
       days: trip.days.map((day) => day.title).toList(),
+      dayWarning: (index) => listing.endWarning(dayDate: trip.days[index].date),
       onPlan: (dayIndex, section, {
         time,
         closingTime,
@@ -585,13 +610,6 @@ class _HeroGalleryState extends State<_HeroGallery> {
                   );
                 },
               );
-
-              if (index == 0) {
-                return Hero(
-                  tag: "listing-image-${widget.listing.id}",
-                  child: image,
-                );
-              }
 
               return image;
             },
@@ -767,7 +785,14 @@ class _KnowBeforeYouGo extends StatelessWidget {
           value: listing.bookingUrl.trim(),
           onTap: () => _openLink(context, booking),
         ),
-      if (listing.status.trim().isNotEmpty)
+      if (listing.endsAt != null)
+        (
+          icon: Icons.event_busy_outlined,
+          label: 'Ends',
+          value: Listing.shortDate(listing.endsAt!),
+          onTap: null,
+        ),
+      if (listing.endsAt == null && listing.status.trim().isNotEmpty)
         (icon: Icons.info_outline_rounded, label: 'Status', value: listing.status, onTap: null),
     ];
     return _CardContainer(
@@ -1340,6 +1365,42 @@ class _BottomButton extends StatelessWidget {
       ),
       onPressed: onTap,
       child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+    );
+  }
+}
+
+class _UnavailableBanner extends StatelessWidget {
+  const _UnavailableBanner({required this.unavailability});
+
+  final ListingUnavailability unavailability;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(DESpacing.md),
+      decoration: BoxDecoration(
+        color: DEColors.border.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(DERadius.large),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            unavailability.label,
+            style: const TextStyle(
+              color: DEColors.textPrimary,
+              fontWeight: FontWeight.w900,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            unavailability.explanation,
+            style: const TextStyle(color: DEColors.textSecondary),
+          ),
+        ],
+      ),
     );
   }
 }

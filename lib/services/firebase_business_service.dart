@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../shared/utils/web_link.dart';
 import '../models/business_profile.dart';
@@ -6,10 +7,102 @@ import '../models/business_profile.dart';
 /// Firestore operations for owner-submitted business profiles and experiences.
 /// Publishing remains an admin review action enforced by Firestore Rules.
 class FirebaseBusinessService {
-  FirebaseBusinessService({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+  FirebaseBusinessService({
+    FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _functions =
+           functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
 
   final FirebaseFirestore _firestore;
+  final FirebaseFunctions _functions;
+
+  Future<void> _manage({
+    required String uid,
+    required String experienceId,
+    required String action,
+    String? message,
+    DateTime? endsAt,
+    String? photoUrl,
+  }) async {
+    try {
+      await _functions.httpsCallable('manageExperience').call({
+        'businessId': uid,
+        'experienceId': experienceId,
+        'action': action,
+        'message': ?message,
+        'photoUrl': ?photoUrl,
+        if (action == 'set_end_date')
+          'endsAt': endsAt?.toUtc().toIso8601String(),
+      });
+    } on FirebaseFunctionsException catch (error) {
+      // Server messages are written for owners ("The end date must be in the
+      // future."), so they are safe to show as they are.
+      throw StateError(error.message ?? 'Could not update this experience.');
+    }
+  }
+
+  /// Makes one of the experience's already-approved photos the cover. Takes
+  /// effect right away and needs no review, because it adds no new content.
+  Future<void> setCoverPhoto({
+    required String uid,
+    required String experienceId,
+    required String photoUrl,
+  }) => _manage(
+    uid: uid,
+    experienceId: experienceId,
+    action: 'set_cover',
+    photoUrl: photoUrl,
+  );
+
+  /// A fresh experience id, so photos can be uploaded to their folder before
+  /// the experience itself is submitted.
+  String newExperienceId(String uid) =>
+      _business(uid).collection('experiences').doc().id;
+
+  /// Takes a live experience off the public list for now. Travelers who saved
+  /// it see it as temporarily unavailable, with [message] if given.
+  Future<void> hideExperience({
+    required String uid,
+    required String experienceId,
+    String message = '',
+  }) => _manage(
+    uid: uid,
+    experienceId: experienceId,
+    action: 'hide',
+    message: message,
+  );
+
+  Future<void> showExperience({
+    required String uid,
+    required String experienceId,
+  }) => _manage(uid: uid, experienceId: experienceId, action: 'unhide');
+
+  /// Permanently deletes an experience. Travelers who saved it see it as no
+  /// longer available, with [message] if given.
+  Future<void> deleteExperience({
+    required String uid,
+    required String experienceId,
+    String message = '',
+  }) => _manage(
+    uid: uid,
+    experienceId: experienceId,
+    action: 'delete',
+    message: message,
+  );
+
+  /// Sets or (with null) clears the date after which the experience ends on
+  /// its own. A new date on an ended experience runs it again.
+  Future<void> setEndDate({
+    required String uid,
+    required String experienceId,
+    required DateTime? endsAt,
+  }) => _manage(
+    uid: uid,
+    experienceId: experienceId,
+    action: 'set_end_date',
+    endsAt: endsAt,
+  );
 
   DocumentReference<Map<String, dynamic>> _business(String uid) =>
       _firestore.collection('businesses').doc(uid);
@@ -90,8 +183,12 @@ class FirebaseBusinessService {
     String phone = '',
     String hours = '',
     String schedule = '',
+    List<String> photos = const [],
+    String? id,
   }) async {
-    final reference = _business(uid).collection('experiences').doc();
+    final reference = _business(uid)
+        .collection('experiences')
+        .doc(id ?? _business(uid).collection('experiences').doc().id);
     final experience = BusinessExperience(
       id: reference.id,
       title: title.trim(),
@@ -110,6 +207,7 @@ class FirebaseBusinessService {
       phone: phone.trim(),
       hours: hours.trim(),
       schedule: schedule.trim(),
+      photos: photos,
     );
     await reference.set({
       ...experience.toJson(),
@@ -194,6 +292,7 @@ class FirebaseBusinessService {
         'phone': experience.phone.trim(),
         'hours': experience.hours.trim(),
         'schedule': experience.schedule.trim(),
+        'photos': experience.photos,
         'updatedAt': FieldValue.serverTimestamp(),
         if (resubmitting) ...{
           'status': 'pending_review',

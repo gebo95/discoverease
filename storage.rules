@@ -15,15 +15,29 @@ service firebase.storage {
     }
 
     function isAdmin() {
-      return signedIn() && request.auth.token.admin == true;
+      return signedIn() && request.auth.token.get('admin', false) == true;
     }
 
-    match /businesses/{businessId}/photos/{fileName} {
-      allow read: if true;
-      allow create, update: if ownsBusiness(businessId)
-        && request.resource.size < 10 * 1024 * 1024
+    // Owners upload here. Nothing in this folder is public: only the owner and
+    // reviewers can read it. Files are never overwritten, so an approved
+    // upload cannot be swapped for different content afterwards.
+    match /pending/{businessId}/{experienceId}/{fileName} {
+      allow read: if ownsBusiness(businessId) || isAdmin();
+      allow create: if resource == null
+        && ownsBusiness(businessId)
+        && fileName.matches('[A-Za-z0-9_-]{1,80}[.](jpg|jpeg|png|webp)')
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow update: if false;
       allow delete: if ownsBusiness(businessId) || isAdmin();
+    }
+
+    // Approved photos. Anyone can see them; only the server (which bypasses
+    // these rules) can add or remove them, after an admin approves.
+    match /public/{businessId}/{experienceId}/{fileName} {
+      allow read: if true;
+      allow write: if false;
     }
   }
 }

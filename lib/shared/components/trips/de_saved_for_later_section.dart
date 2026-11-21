@@ -8,13 +8,20 @@ class DESavedForLaterItem {
   final String title;
   final String imageUrl;
   final VoidCallback onTap;
-  final VoidCallback onAddToDay;
+
+  /// Null when the experience can no longer be planned.
+  final VoidCallback? onAddToDay;
+
+  /// Set when the experience is no longer offered, for example
+  /// "Temporarily unavailable". Replaces the add button.
+  final String? unavailableLabel;
 
   const DESavedForLaterItem({
     required this.title,
     required this.imageUrl,
     required this.onTap,
     required this.onAddToDay,
+    this.unavailableLabel,
   });
 }
 
@@ -168,6 +175,16 @@ class _SavedForLaterCard extends StatelessWidget {
                         ),
                       ),
                       const Spacer(),
+                      if (item.unavailableLabel != null)
+                        Text(
+                          item.unavailableLabel!,
+                          style: const TextStyle(
+                            color: DEColors.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        )
+                      else
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(

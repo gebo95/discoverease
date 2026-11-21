@@ -69,6 +69,7 @@ class TripDashboardActions {
       experienceTitle: listing.title,
       days: trip.days.map((day) => day.title).toList(),
       initialDayIndex: initialDayIndex,
+      dayWarning: (index) => listing.endWarning(dayDate: trip.days[index].date),
       onPlan: (
         dayIndex,
         section, {
