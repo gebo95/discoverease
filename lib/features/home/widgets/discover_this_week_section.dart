@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../models/listing.dart';
 import '../../../repositories/destination_repository.dart';
+import '../../../repositories/featured_repository.dart';
 import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/sections/de_section_header.dart';
 import '../../../shared/navigation/de_page_route.dart';
@@ -81,7 +82,9 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
 
     final listingRepository = context.read<ListingRepository>();
 
-    final listings = listingRepository.getForDestination(destination.id);
+    final featured = context.watch<FeaturedRepository?>();
+    final all = listingRepository.getForDestination(destination.id);
+    final listings = featured?.featuredFirst(all, (listing) => listing.id) ?? all;
 
     if (listings.isEmpty) {
       return const SizedBox.shrink();
@@ -124,7 +127,9 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
                 padding: const EdgeInsets.only(right: DESpacing.sm),
                 child: _HeroExperienceCard(
                   listing: listing,
-                  badge: _badgeFor(index),
+                  badge: (featured?.isFeatured(listing.id) ?? false)
+                      ? '⭐ Featured'
+                      : _badgeFor(index),
                   onTap: () {
                     Navigator.push(
                       context,

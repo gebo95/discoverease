@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../shared/navigation/de_page_route.dart';
 import '../../../repositories/listing_repository.dart';
+import '../../../repositories/featured_repository.dart';
 import '../../../shared/components/cards/de_listing_card.dart';
 import '../../../shared/components/inputs/de_search_bar.dart';
 import '../../../shared/theme/de_colors.dart';
@@ -83,13 +84,17 @@ class _ExplorePageState extends State<ExplorePage> {
 
     final listingRepository = context.watch<ListingRepository>();
 
-    final listings = listingRepository.searchListings(
+    final found = listingRepository.searchListings(
       destination.id,
       searchQuery,
       filter: selectedFilter,
       areaId: effectiveAreaId,
       category: selectedCategory,
     );
+    // Paid Featured placements come first; everything else keeps its order.
+    final featured = context.watch<FeaturedRepository?>();
+    final listings =
+        featured?.featuredFirst(found, (listing) => listing.id) ?? found;
     final saved = context.watch<SavedRepository?>();
 
     // Category buttons come from the destination's own home rows, so "See all"

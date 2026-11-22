@@ -4,11 +4,22 @@ const { setGlobalOptions } = require('firebase-functions/v2');
 const { onDocumentUpdated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { HttpsError, onCall } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { defineSecret, defineString } = require('firebase-functions/params');
+const { onRequest } = require('firebase-functions/v2/https');
 const { getStorage } = require('firebase-admin/storage');
 const logger = require('firebase-functions/logger');
 const { planTransition } = require('./availability_logic');
 const { planPhotoPublish, planSetCover } = require('./photos_logic');
 const { planPulse } = require('./pulse_logic');
+const {
+  PRODUCTS,
+  allowance,
+  effectivePlan,
+  featuredEnd,
+  isFreeEdit,
+  planPulseUse,
+  subscriptionFields,
+} = require('./plans_logic');
 const {
   SHARE_DAILY_CAP,
   digest,
@@ -566,23 +577,29 @@ exports.postPulse = onCall(
       .collection('businesses').doc(businessId)
       .collection('experiences').doc(experienceId);
     const pulseRef = db.collection('pulses').doc(experienceId);
+    const subscriptionRef = db.collection('subscriptions').doc(businessId);
     try {
       return await db.runTransaction(async (transaction) => {
         await assertOwnsBusiness(request, businessId, transaction);
-        const [experienceSnap, pulseSnap] = await Promise.all([
+        const [experienceSnap, pulseSnap, subscriptionSnap] = await Promise.all([
           transaction.get(experienceRef),
           transaction.get(pulseRef),
+          transaction.get(subscriptionRef),
         ]);
         const experience = experienceSnap.exists ? experienceSnap.data() : undefined;
-        const plan = planPulse({
-          experience,
-          tag,
-          message,
-          hours,
-          existing: pulseSnap.exists ? pulseSnap.data() : undefined,
-          now: new Date(),
-        });
+        const existing = pulseSnap.exists ? pulseSnap.data() : undefined;
+        const subscription = subscriptionSnap.exists ? subscriptionSnap.data() : undefined;
+        const now = new Date();
+        const plan = planPulse({ experience, tag, message, hours, existing, now });
         if (!plan.ok) throw new HttpsError(plan.code, plan.message);
+        // A typo fix (same tag, same running time) is free and keeps the
+        // original start and end; anything else is a new post that uses the
+        // monthly allowance, then bought packs.
+        const freeEdit = isFreeEdit({ existing, tag, hours, now });
+        const use = planPulseUse({ subscription, freeEdit, now });
+        if (!use.ok) throw new HttpsError(use.code, use.message);
+        const startsAt = freeEdit ? existing.startsAt : Timestamp.fromDate(plan.pulse.startsAt);
+        const expiresAt = freeEdit ? existing.expiresAt : Timestamp.fromDate(plan.pulse.expiresAt);
         transaction.set(pulseRef, {
           listingId: experienceId,
           businessId,
@@ -592,10 +609,18 @@ exports.postPulse = onCall(
           imageUrl: experience.imageUrl || '',
           tag: plan.pulse.tag,
           message: plan.pulse.message,
-          startsAt: Timestamp.fromDate(plan.pulse.startsAt),
-          expiresAt: Timestamp.fromDate(plan.pulse.expiresAt),
+          startsAt,
+          expiresAt,
         });
-        return { expiresAt: plan.pulse.expiresAt.toISOString() };
+        if (Object.keys(use.update).length > 0) {
+          transaction.set(subscriptionRef, use.update, { merge: true });
+        }
+        const after = allowance({ ...(subscription || {}), ...use.update }, now);
+        return {
+          expiresAt: expiresAt.toDate().toISOString(),
+          usedAllowance: !freeEdit,
+          remaining: after.remaining,
+        };
       });
     } catch (error) {
       if (error instanceof HttpsError) throw error;
@@ -659,5 +684,282 @@ exports.endPulseWhenUnavailable = onDocumentWritten(
     const pulseRef = db.collection('pulses').doc(event.params.listingId);
     const pulse = await pulseRef.get();
     if (pulse.exists) await pulseRef.delete();
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Plans, Pulse packs and Featured placement (Stripe)
+//
+// Only these functions change a business's plan, Pulse packs or Featured
+// placement, and only after Stripe confirms the payment through the webhook.
+// The app never writes to `subscriptions`, `billing_private` or `featured`.
+// ---------------------------------------------------------------------------
+
+const stripeSecretKey = defineSecret('STRIPE_SECRET_KEY');
+const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET');
+const appUrl = defineString('APP_URL', { default: '' });
+const priceParams = {
+  plus: defineString('STRIPE_PRICE_PLUS', { default: '' }),
+  pro: defineString('STRIPE_PRICE_PRO', { default: '' }),
+  pack5: defineString('STRIPE_PRICE_PACK5', { default: '' }),
+  pack10: defineString('STRIPE_PRICE_PACK10', { default: '' }),
+  featured7: defineString('STRIPE_PRICE_FEATURED7', { default: '' }),
+  featured30: defineString('STRIPE_PRICE_FEATURED30', { default: '' }),
+};
+
+function configuredPrices() {
+  const prices = {};
+  for (const key of Object.keys(priceParams)) prices[key] = priceParams[key].value();
+  return prices;
+}
+
+function stripeClient() {
+  // Required lazily so the unit tests and emulator load without the package
+  // being configured.
+  const Stripe = require('stripe');
+  return new Stripe(stripeSecretKey.value());
+}
+
+function appBaseUrl() {
+  const base = appUrl.value().replace(/\/+$/, '');
+  if (!base) throw new HttpsError('failed-precondition', 'Billing is not set up yet.');
+  return base;
+}
+
+// Finds or creates the Stripe customer for a business. The ids live in
+// `billing_private`, which no client can read.
+async function customerFor(stripe, businessId, email) {
+  const ref = db.collection('billing_private').doc(businessId);
+  const snap = await ref.get();
+  if (snap.exists && snap.data().stripeCustomerId) return snap.data().stripeCustomerId;
+  const customer = await stripe.customers.create({
+    email: email || undefined,
+    metadata: { businessId },
+  });
+  await ref.set({ stripeCustomerId: customer.id }, { merge: true });
+  return customer.id;
+}
+
+exports.createCheckoutSession = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true, secrets: [stripeSecretKey] },
+  async (request) => {
+    const { businessId, product, experienceId } = request.data || {};
+    if (!isValidListingId(businessId)) {
+      throw new HttpsError('invalid-argument', 'A business is required.');
+    }
+    const definition = PRODUCTS[product];
+    if (!definition) throw new HttpsError('invalid-argument', 'Choose something to buy.');
+    const priceId = configuredPrices()[product];
+    if (!priceId) throw new HttpsError('failed-precondition', 'This option is not available yet.');
+    if (definition.featuredDays && !isValidListingId(experienceId)) {
+      throw new HttpsError('invalid-argument', 'Choose which experience to feature.');
+    }
+    const base = appBaseUrl();
+    let email = '';
+    await db.runTransaction(async (transaction) => {
+      await assertOwnsBusiness(request, businessId, transaction);
+      const business = await transaction.get(db.collection('businesses').doc(businessId));
+      email = business.exists ? business.data().email || '' : '';
+      if (definition.featuredDays) {
+        const experience = await transaction.get(
+          db.collection('businesses').doc(businessId)
+            .collection('experiences').doc(experienceId),
+        );
+        if (!experience.exists || experience.data().status !== 'published') {
+          throw new HttpsError('failed-precondition', 'Only live experiences can be featured.');
+        }
+      }
+      if (definition.plan) {
+        const subscription = await transaction.get(db.collection('subscriptions').doc(businessId));
+        if (effectivePlan(subscription.exists ? subscription.data() : undefined) !== 'free') {
+          throw new HttpsError(
+            'failed-precondition',
+            'You already have a plan. Use Manage billing to change it.',
+          );
+        }
+      }
+    });
+    try {
+      const stripe = stripeClient();
+      const customer = await customerFor(stripe, businessId, email);
+      const metadata = { businessId, product, experienceId: experienceId || '' };
+      const session = await stripe.checkout.sessions.create({
+        mode: definition.mode,
+        customer,
+        client_reference_id: businessId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        metadata,
+        ...(definition.mode === 'subscription' ? { subscription_data: { metadata } } : {}),
+        success_url: `${base}/?billing=success`,
+        cancel_url: `${base}/?billing=cancel`,
+      });
+      return { url: session.url };
+    } catch (error) {
+      logger.error('Failed to start checkout.', { businessId, product, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not start checkout.');
+    }
+  },
+);
+
+exports.createPortalSession = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true, secrets: [stripeSecretKey] },
+  async (request) => {
+    const { businessId } = request.data || {};
+    if (!isValidListingId(businessId)) {
+      throw new HttpsError('invalid-argument', 'A business is required.');
+    }
+    const base = appBaseUrl();
+    await db.runTransaction(async (transaction) => {
+      await assertOwnsBusiness(request, businessId, transaction);
+    });
+    const privateSnap = await db.collection('billing_private').doc(businessId).get();
+    const customer = privateSnap.exists ? privateSnap.data().stripeCustomerId : null;
+    if (!customer) throw new HttpsError('failed-precondition', 'There is no billing to manage yet.');
+    try {
+      const session = await stripeClient().billingPortal.sessions.create({
+        customer,
+        return_url: `${base}/`,
+      });
+      return { url: session.url };
+    } catch (error) {
+      logger.error('Failed to open the billing portal.', { businessId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not open billing.');
+    }
+  },
+);
+
+// Writes a subscription's current state. `businessId` comes from the metadata
+// we attached at checkout, or from the customer id as a fallback.
+async function applySubscription(transaction, businessId, fields) {
+  const subscriptionRef = db.collection('subscriptions').doc(businessId);
+  const update = {
+    plan: fields.plan,
+    status: fields.status,
+    cancelAtPeriodEnd: fields.cancelAtPeriodEnd,
+    currentPeriodEnd: fields.currentPeriodEnd ? Timestamp.fromDate(fields.currentPeriodEnd) : null,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  transaction.set(subscriptionRef, update, { merge: true });
+  transaction.set(
+    db.collection('businesses').doc(businessId),
+    { subscriptionTier: effectivePlan(fields) },
+    { merge: true },
+  );
+}
+
+async function businessForCustomer(customerId) {
+  if (!customerId) return null;
+  const found = await db
+    .collection('billing_private')
+    .where('stripeCustomerId', '==', customerId)
+    .limit(1)
+    .get();
+  return found.empty ? null : found.docs[0].id;
+}
+
+exports.stripeWebhook = onRequest(
+  { secrets: [stripeSecretKey, stripeWebhookSecret], invoker: 'public' },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('POST only');
+      return;
+    }
+    const stripe = stripeClient();
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.rawBody,
+        req.headers['stripe-signature'],
+        stripeWebhookSecret.value(),
+      );
+    } catch (error) {
+      logger.warn('Rejected a webhook with a bad signature.');
+      res.status(400).send('Bad signature');
+      return;
+    }
+    const prices = configuredPrices();
+    try {
+      const object = event.data.object;
+      // Work out what this event means before opening the transaction.
+      let subscriptionChange = null;
+      let purchase = null;
+      if (event.type.startsWith('customer.subscription.')) {
+        const businessId =
+          object.metadata?.businessId || (await businessForCustomer(object.customer));
+        if (businessId) {
+          const fields = subscriptionFields(object, prices);
+          if (event.type === 'customer.subscription.deleted') {
+            fields.plan = 'free';
+            fields.status = 'canceled';
+          }
+          subscriptionChange = { businessId, fields };
+        }
+      } else if (event.type === 'checkout.session.completed') {
+        const businessId = object.metadata?.businessId;
+        const definition = PRODUCTS[object.metadata?.product];
+        if (businessId && definition) {
+          if (definition.mode === 'subscription' && object.subscription) {
+            const subscription = await stripe.subscriptions.retrieve(object.subscription);
+            subscriptionChange = {
+              businessId,
+              fields: subscriptionFields(subscription, prices),
+            };
+          } else if (definition.mode === 'payment' && object.payment_status === 'paid') {
+            purchase = {
+              businessId,
+              pulses: definition.pulses || 0,
+              featuredDays: definition.featuredDays || 0,
+              experienceId: object.metadata.experienceId || '',
+            };
+          }
+        }
+      }
+      await db.runTransaction(async (transaction) => {
+        const eventRef = db.collection('stripe_events').doc(event.id);
+        if ((await transaction.get(eventRef)).exists) return; // already handled
+        if (subscriptionChange) {
+          await applySubscription(transaction, subscriptionChange.businessId, subscriptionChange.fields);
+        }
+        if (purchase && purchase.pulses > 0) {
+          transaction.set(
+            db.collection('subscriptions').doc(purchase.businessId),
+            { packBalance: FieldValue.increment(purchase.pulses) },
+            { merge: true },
+          );
+        }
+        if (purchase && purchase.featuredDays > 0) {
+          const featuredRef = db.collection('featured').doc(purchase.experienceId);
+          const [featured, experience] = await Promise.all([
+            transaction.get(featuredRef),
+            transaction.get(
+              db.collection('businesses').doc(purchase.businessId)
+                .collection('experiences').doc(purchase.experienceId),
+            ),
+          ]);
+          if (experience.exists) {
+            const now = new Date();
+            const current = featured.exists ? featured.data().endsAt?.toDate?.() : null;
+            transaction.set(featuredRef, {
+              listingId: purchase.experienceId,
+              businessId: purchase.businessId,
+              destinationId: experience.data().destinationId || '',
+              startsAt: featured.exists ? featured.data().startsAt : Timestamp.fromDate(now),
+              endsAt: Timestamp.fromDate(
+                featuredEnd({ currentEnd: current, days: purchase.featuredDays, now }),
+              ),
+            });
+          }
+        }
+        transaction.set(eventRef, { type: event.type, handledAt: FieldValue.serverTimestamp() });
+      });
+      res.status(200).send('ok');
+    } catch (error) {
+      logger.error('Failed to handle a Stripe event.', {
+        type: event.type,
+        error: error?.stack || String(error),
+      });
+      // A non-2xx reply makes Stripe retry later.
+      res.status(500).send('error');
+    }
   },
 );

@@ -19,7 +19,10 @@ import '../../../services/firebase_business_service.dart';
 import '../../../services/firebase_engagement_service.dart';
 import '../../../shared/utils/photo_files.dart';
 import '../../../shared/utils/web_link.dart';
+import '../../../models/business_plan.dart';
+import '../../../services/firebase_billing_service.dart';
 import '../widgets/address_field.dart';
+import 'plans_page.dart';
 import '../widgets/choice_fields.dart';
 import '../widgets/hours_schedule_fields.dart';
 import '../widgets/photo_thumb.dart';
@@ -218,7 +221,18 @@ class _BusinessDashboard extends StatelessWidget {
         Text(profile.email),
         const SizedBox(height: 16),
         _ReviewStatus(status: profile.status),
-        const SizedBox(height: 24),
+        const SizedBox(height: 12),
+        StreamBuilder<BillingSummary>(
+          stream: context.read<FirebaseBillingService>().watch(uid),
+          builder: (context, snapshot) => PulsesLeftCard(
+            summary: snapshot.data ?? BillingSummary.empty,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => PlansPage(uid: uid)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -1279,7 +1293,7 @@ String? _availabilityNote(BusinessExperience experience) {
   return null;
 }
 
-enum _ExperienceAction { pulse, hide, show, setEnd, clearEnd, delete }
+enum _ExperienceAction { pulse, feature, hide, show, setEnd, clearEnd, delete }
 
 class _ExperienceMenu extends StatelessWidget {
   const _ExperienceMenu({
@@ -1310,6 +1324,11 @@ class _ExperienceMenu extends StatelessWidget {
                   ? 'Update or end Pulse'
                   : 'Post a Pulse',
             ),
+          ),
+        if (live && experience.availability == 'live')
+          const PopupMenuItem(
+            value: _ExperienceAction.feature,
+            child: Text('Feature this experience'),
           ),
         if (live && experience.availability == 'live')
           const PopupMenuItem(
@@ -1374,6 +1393,13 @@ class _ExperienceMenu extends StatelessWidget {
           ),
         );
         if (posted != null) messenger.showSnackBar(SnackBar(content: Text(posted)));
+      case _ExperienceAction.feature:
+        await showFeatureDialog(
+          context: context,
+          uid: uid,
+          experienceId: experience.id,
+          title: experience.title,
+        );
       case _ExperienceAction.hide:
         final note = await _askForNotice(
           context,
@@ -1847,6 +1873,19 @@ class _PulseDialogState extends State<_PulseDialog> {
                     onSelected: _busy ? null : (_) => setState(() => _hours = hours),
                   ),
               ],
+            ),
+            const SizedBox(height: 8),
+            StreamBuilder<BillingSummary>(
+              stream: context.read<FirebaseBillingService>().watch(widget.uid),
+              builder: (context, snapshot) {
+                final left = (snapshot.data ?? BillingSummary.empty)
+                    .pulsesLeft(DateTime.now());
+                return Text(
+                  'A new Pulse uses 1 of your Pulses ($left left). Fixing the '
+                  'words on a live Pulse, keeping the same tag and time, is free.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                );
+              },
             ),
             if (_error != null)
               Padding(

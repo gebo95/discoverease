@@ -748,3 +748,49 @@ test('a new submission can include a highlight tag', async () => {
     setDoc(doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-7'), experienceDoc('exp-7', { highlight: 'Hidden Gem' })),
   );
 });
+
+// ------------------------------------------------------ plans and Featured
+
+test('an owner can read their own plan but nobody can write it', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1'));
+    await setDoc(doc(db, 'subscriptions/biz-1'), { plan: 'plus', status: 'active', packBalance: 5 });
+  });
+  await assertSucceeds(getDoc(doc(asUser('biz-1'), 'subscriptions/biz-1')));
+  await assertSucceeds(getDoc(doc(asAdmin(), 'subscriptions/biz-1')));
+  await assertFails(getDoc(doc(asUser('biz-2'), 'subscriptions/biz-1')));
+  await assertFails(getDoc(doc(signedOut(), 'subscriptions/biz-1')));
+  await assertFails(getDocs(collection(asUser('biz-1'), 'subscriptions')));
+  await assertFails(setDoc(doc(asUser('biz-1'), 'subscriptions/biz-1'), { plan: 'pro', status: 'active' }));
+  await assertFails(updateDoc(doc(asUser('biz-1'), 'subscriptions/biz-1'), { packBalance: 999 }));
+  await assertFails(setDoc(doc(asAdmin(), 'subscriptions/biz-1'), { plan: 'pro', status: 'active' }));
+});
+
+test('Featured placement is public to read and never written by an app', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'featured/exp-1'), { listingId: 'exp-1', businessId: 'biz-1', endsAt: now() }),
+  );
+  await assertSucceeds(getDoc(doc(signedOut(), 'featured/exp-1')));
+  await assertSucceeds(getDocs(collection(signedOut(), 'featured')));
+  await assertFails(setDoc(doc(asUser('biz-1'), 'featured/exp-2'), { listingId: 'exp-2', businessId: 'biz-1' }));
+  await assertFails(updateDoc(doc(asUser('biz-1'), 'featured/exp-1'), { endsAt: now() }));
+  await assertFails(deleteDoc(doc(asAdmin(), 'featured/exp-1')));
+});
+
+test('Stripe ids and handled events cannot be read or written by any app', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'billing_private/biz-1'), { stripeCustomerId: 'cus_1' });
+    await setDoc(doc(db, 'stripe_events/evt_1'), { type: 'x' });
+  });
+  for (const db of [asUser('biz-1'), asAdmin(), signedOut()]) {
+    await assertFails(getDoc(doc(db, 'billing_private/biz-1')));
+    await assertFails(setDoc(doc(db, 'billing_private/biz-1'), { stripeCustomerId: 'cus_2' }));
+    await assertFails(getDoc(doc(db, 'stripe_events/evt_1')));
+    await assertFails(setDoc(doc(db, 'stripe_events/evt_2'), { type: 'y' }));
+  }
+});
+
+test('an owner cannot give themselves a paid tier on their business record', async () => {
+  await seed(async (db) => setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1')));
+  await assertFails(updateDoc(doc(asUser('biz-1'), 'businesses/biz-1'), { subscriptionTier: 'pro' }));
+});

@@ -304,6 +304,28 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Plan, Pulse usage and bought packs. Owners can read their own; only
+    // Cloud Functions write it, after Stripe confirms a payment.
+    match /subscriptions/{businessId} {
+      allow get: if isAdmin() || ownsBusiness(businessId);
+      allow list: if isAdmin();
+      allow write: if false;
+    }
+
+    // Paid Featured placement, public so cards can sort and label it.
+    match /featured/{listingId} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+
+    // Stripe customer ids and handled webhook events: server only.
+    match /billing_private/{businessId} {
+      allow read, write: if false;
+    }
+    match /stripe_events/{eventId} {
+      allow read, write: if false;
+    }
+
     match /catalog/{experienceId} {
       allow get, list: if resource.data.status == 'published';
       allow create, update, delete: if isAdmin();

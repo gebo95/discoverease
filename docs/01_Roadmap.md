@@ -60,3 +60,10 @@ subscriptions phase first (payments, tiers).
 **Pulse notifications.** Not shown on the trip pages (a place not on the trip is
 not relevant there). A saved place posting a Pulse is a good notification once
 push notifications are built.
+
+## Phase 4 (subscriptions) status
+
+Built: plans, Pulse allowance, Pulse packs, Featured placement, Stripe
+checkout/portal/webhook. See docs/16_Subscriptions_V1.md. Not yet: Verified
+badge display, analytics preview, Pro priority beyond Featured sorting, Apple /
+Google in-app billing for a phone build.

@@ -22,6 +22,8 @@ import 'services/firebase_business_service.dart';
 import 'services/firebase_catalog_sync_service.dart';
 import 'services/firebase_unavailability_sync_service.dart';
 import 'services/firebase_admin_review_service.dart';
+import 'repositories/featured_repository.dart';
+import 'services/firebase_billing_service.dart';
 import 'services/firebase_engagement_service.dart';
 
 Future<void> main() async {
@@ -42,6 +44,11 @@ Future<void> main() async {
           create: (context) => BusinessPulseRepository(
             source: context.read<FirebaseBusinessPulseService>().watchActive(),
           ),
+        ),
+        Provider(create: (_) => FirebaseBillingService()),
+        ChangeNotifierProvider(
+          lazy: false,
+          create: (_) => FeaturedRepository(source: FeaturedSource().watch()),
         ),
         Provider(create: (_) => ExperiencePhotoService()),
         Provider(create: (_) => FirebaseAdminReviewService()),
