@@ -132,3 +132,88 @@ Owners add up to 5 photos per experience (JPEG, PNG or WebP, 5 MB each) and choo
 - **Storage.** Uploads go to `pending/{businessId}/{experienceId}/`, which only the owner and admins can read. Approval calls the admin-only `publishExperiencePhotos` function, which copies the files to `public/{businessId}/{experienceId}/` (readable by anyone, writable only by the server). Files are never overwritten once uploaded.
 - **Data.** `photos` on the experience (and inside a pending revision) lists the photos, cover first. Entries are private upload paths until approved, then public addresses. `imageUrl` mirrors the cover, and the public catalog entry carries `imageUrl` plus `gallery` (the rest).
 - **Known limits for now.** Removed or replaced photos are not deleted from Storage, and abandoned uploads stay in the private folder; a cleanup job comes later. Owners can upload several unused files to `pending/` (only size and type are limited).
+
+## Event details form and business name (Phase 3)
+
+Owners can now fill in every section of the public detail page except the two
+that DiscoverEase works out itself ("Pair it with" and "Continue your day").
+
+- **Price**: required, one of `$`, `$$`, `$$$`, `$$$$` (budget friendly,
+  moderate, pricey, splurge).
+- **Type** (subcategory): up to 3 buttons. The category's own types come
+  first, then every other type, so a bar can also be tagged Party or Beach and
+  shows under each. Stored as one text value ("Bar & Lounge, Beach, Party"),
+  which search and the category filters already match on.
+- **Hours**: day buttons plus opening and closing time pickers, one or more
+  rows; saved as readable text ("Mon–Fri 9:00 AM – 5:00 PM").
+- **When it happens**: one date, a date range, or every week on chosen days,
+  each with an optional start time, saved as readable text. This is display
+  text only; the separate end date (event menu) is what removes an event.
+- **Why you'll love it**: free text, up to 600 characters.
+- **Perfect for** and **What makes it special**: preset buttons, up to 5 each.
+  The choices live in `lib/models/experience_options.dart`.
+
+These follow the same review rules as other text: a live event keeps its old
+details until an admin approves the change; the admin "Live edits" card shows
+the differences. On approval they are copied to the public `catalog` entry.
+Firestore rules cap the text at 600 characters and each list at 5 entries; the
+fixed choice lists are enforced by the app, not the rules.
+
+### Business name
+
+The pencil button next to the name on the business dashboard changes it right
+away, at any stage. A Cloud Function (`syncBusinessName`) copies the new name
+onto every public listing of that business, hidden ones included.
+
+## Address and map pin (Phase 3)
+
+The address field has three helpers, all optional; typing the address alone is
+always enough.
+
+- **Tap the map** to drop a pin (OpenStreetMap tiles, no API key or cost).
+- **Find on map** looks the typed address up with OpenStreetMap's Nominatim
+  service and drops the pin there (only when the button is tapped).
+- **Use my location** asks the device for its position, drops the pin and fills
+  the address if it was empty. Needs location permission; refusal just falls
+  back to typing.
+
+The pin is saved as `latitude` and `longitude` (both or neither) on the
+experience, and is public content, so on a live event moving it goes through
+review like any text change (the review card shows "Map pin"). Approval copies
+it to the catalog; a proposal without a pin removes the old one. On the listing
+page the address row becomes **Directions**: it opens the device's maps app at
+the exact pin, or searches the typed address plus the destination name.
+
+Setup once per machine: `flutter pub add flutter_map latlong2 geolocator http`.
+Android needs `ACCESS_FINE_LOCATION` in `AndroidManifest.xml`; iOS needs
+`NSLocationWhenInUseUsageDescription` in `Info.plist`. Web works as is (the
+browser asks for permission, and the site must be served over HTTPS in
+production). OpenStreetMap's public tile and search servers are for light use;
+if DiscoverEase grows, move to a paid map provider.
+
+## Business dashboard thumbnails
+
+Each experience card on the dashboard shows its cover photo, including photos
+still waiting for review (the owner can see their own private uploads).
+
+## Highlight tag and card tags
+
+Owners can pick one optional **highlight tag** (Local Favorite, Hidden Gem, Best
+Seller, Great Value, Limited Time, Family Favorite, Date Night Pick, Must Try).
+It is reviewed like other text. The tag on a card is chosen in this order: a
+live Pulse (cards only), an end date ("Ends Dec 3"), the owner's highlight, then
+the automatic "New", which wears off 14 days after approval. If none apply, the
+card shows no tag.
+
+## Explore and navigation
+
+- Home rows' **See all**, "View Areas", an area card and the other "Explore"
+  buttons switch to the **Explore tab**, so the bottom bar stays. "See all"
+  arrives with that row's category already chosen (and uses the same matching
+  as the row, so the same places appear).
+- Explore has a **Browse by category** row (the destination's home-row
+  categories) above the area and mood buttons. Selecting the chosen one again,
+  or **All**, clears it.
+- A page opened on its own (from a trip) shows a back button.
+- **Double tap** a card on Home or Explore saves or removes it; the heart only
+  shows while saved.

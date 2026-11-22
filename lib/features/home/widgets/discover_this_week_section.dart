@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'de_category_row.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/listing.dart';
@@ -104,9 +105,7 @@ class _DiscoverThisWeekSectionState extends State<DiscoverThisWeekSection> {
           subtitle:
               "Handpicked experiences in ${destination.name} worth checking out.",
           actionText: "Explore →",
-          onAction: () {
-            // Later: open Explore for the current destination.
-          },
+          onAction: () => openExploreFrom(context),
         ),
         SizedBox(
           height: 340,

@@ -8,11 +8,16 @@ import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_spacing.dart';
 import 'package:provider/provider.dart';
 import '../../../shared/components/chips/de_filter_chip.dart';
+import '../../../repositories/saved_repository.dart';
+import '../../../shared/utils/saved_toggle.dart';
 import '../../listing/pages/listing_detail_page.dart';
 import '../../../repositories/destination_repository.dart';
 
 class ExplorePage extends StatefulWidget {
   final String? initialFilter;
+
+  /// A category to start on, such as the row "See all" was tapped from.
+  final String? initialCategory;
   final String? initialAreaId;
   final String? initialDestinationId;
   final bool showBackButton;
@@ -20,6 +25,7 @@ class ExplorePage extends StatefulWidget {
   const ExplorePage({
     super.key,
     this.initialFilter,
+    this.initialCategory,
     this.initialAreaId,
     this.initialDestinationId,
     this.showBackButton = false,
@@ -31,6 +37,7 @@ class ExplorePage extends StatefulWidget {
 
 class _ExplorePageState extends State<ExplorePage> {
   String? selectedFilter;
+  String? selectedCategory;
   String? selectedAreaId;
   String? _lastDestinationId;
   String? _destinationOverride;
@@ -41,6 +48,7 @@ class _ExplorePageState extends State<ExplorePage> {
   void initState() {
     super.initState();
     selectedFilter = widget.initialFilter;
+    selectedCategory = widget.initialCategory;
     selectedAreaId = widget.initialAreaId;
   }
 
@@ -80,7 +88,20 @@ class _ExplorePageState extends State<ExplorePage> {
       searchQuery,
       filter: selectedFilter,
       areaId: effectiveAreaId,
+      category: selectedCategory,
     );
+    final saved = context.watch<SavedRepository?>();
+
+    // Category buttons come from the destination's own home rows, so "See all"
+    // on a row lands on the matching button.
+    final categoryChoices = <({String label, String value})>[
+      for (final section in destination.homeSections)
+        (label: section.title, value: section.category),
+    ];
+    if (selectedCategory != null &&
+        !categoryChoices.any((choice) => choice.value == selectedCategory)) {
+      categoryChoices.insert(0, (label: selectedCategory!, value: selectedCategory!));
+    }
 
     return Scaffold(
       backgroundColor: DEColors.background,
@@ -94,7 +115,7 @@ class _ExplorePageState extends State<ExplorePage> {
               Row(
                 children: [
                   IconButton(
-                    tooltip: 'Back to trip',
+                    tooltip: 'Back',
                     onPressed: () => Navigator.maybePop(context),
                     icon: const Icon(Icons.arrow_back_rounded),
                   ),
@@ -149,6 +170,44 @@ class _ExplorePageState extends State<ExplorePage> {
             ),
 
             const SizedBox(height: 22),
+
+            if (categoryChoices.isNotEmpty) ...[
+              const Text(
+                'Browse by category',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 44,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: DEFilterChip(
+                        label: 'All',
+                        selected: selectedCategory == null,
+                        onTap: () => setState(() => selectedCategory = null),
+                      ),
+                    ),
+                    for (final choice in categoryChoices)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: DEFilterChip(
+                          label: choice.label,
+                          selected: selectedCategory == choice.value,
+                          onTap: () => setState(
+                            () => selectedCategory = selectedCategory == choice.value
+                                ? null
+                                : choice.value,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+            ],
 
             if (areas.isNotEmpty) ...[
               const Text(
@@ -240,6 +299,11 @@ class _ExplorePageState extends State<ExplorePage> {
                       textAlign: TextAlign.center,
                       style: TextStyle(color: DEColors.textSecondary),
                     ),
+                    if (selectedCategory != null)
+                      TextButton(
+                        onPressed: () => setState(() => selectedCategory = null),
+                        child: const Text("Clear category"),
+                      ),
                     if (selectedFilter != null)
                       TextButton(
                         onPressed: () {
@@ -273,6 +337,9 @@ class _ExplorePageState extends State<ExplorePage> {
                   price: listing.price,
                   status: listing.status,
                   pulse: listing.pulse,
+                  listingId: listing.id,
+                  isSaved: saved?.isSaved(listing.id) ?? false,
+                  onToggleSaved: () => toggleSavedListing(context, listing),
                   onTap: () {
                     Navigator.push(
                       context,

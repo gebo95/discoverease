@@ -33,6 +33,9 @@ class ListingUnavailability {
   }
 }
 
+/// How long a listing wears the automatic "New" tag after approval.
+const Duration newListingWindow = Duration(days: 14);
+
 class Listing {
   final String id;
   final String title;
@@ -50,6 +53,9 @@ class Listing {
   final String location;
   /// Optional business-provided details, empty when not supplied.
   final String address;
+  /// Optional map pin set by the business, for directions.
+  final double? latitude;
+  final double? longitude;
   final String website;
   final String bookingUrl;
   final String phone;
@@ -124,6 +130,8 @@ class Listing {
     this.businessId,
     required this.location,
     this.address = '',
+    this.latitude,
+    this.longitude,
     this.website = '',
     this.bookingUrl = '',
     this.phone = '',
@@ -187,8 +195,22 @@ class Listing {
     final rawRating = json['rating'];
     final rawBusinessId = json['businessId'];
     final endsAt = _asDateTime(json['endsAt']);
+    // "New" is automatic when a listing is approved and wears off after two
+    // weeks. Nothing replaces it, so the card just shows no tag.
+    final publishedAt = _asDateTime(json['publishedAt']);
+    final isStaleNew =
+        value('displayStatus') == 'New' &&
+        publishedAt != null &&
+        DateTime.now().difference(publishedAt) > newListingWindow;
+    // The tag on the card: an end date first, then the owner's highlight,
+    // then the automatic "New".
+    final highlight = value('highlight').trim();
     final displayStatus = endsAt != null && endsAt.isAfter(DateTime.now())
         ? 'Ends ${shortDate(endsAt)}'
+        : highlight.isNotEmpty
+        ? highlight
+        : isStaleNew
+        ? ''
         : value('displayStatus');
 
     return Listing(
@@ -203,6 +225,8 @@ class Listing {
       businessId: rawBusinessId is String ? rawBusinessId : null,
       location: value('location'),
       address: value('address'),
+      latitude: _coordinate(json['latitude'], 90),
+      longitude: _coordinate(json['longitude'], 180),
       website: value('website'),
       bookingUrl: value('bookingUrl'),
       phone: value('phone'),
@@ -214,7 +238,11 @@ class Listing {
       reviewCount: (json['reviewCount'] as num?)?.toInt() ?? 0,
       price: value('price'),
       endsAt: endsAt,
-      status: displayStatus.isNotEmpty ? displayStatus : value('status'),
+      status: displayStatus.isNotEmpty
+          ? displayStatus
+          : isStaleNew
+          ? ''
+          : value('status'),
       description: value('description'),
       whyYoullLoveIt: value('whyYoullLoveIt'),
       perfectFor: strings('perfectFor'),
@@ -223,6 +251,13 @@ class Listing {
       continueDayIds: strings('continueDayIds'),
     );
   }
+}
+
+/// A coordinate within +/- [limit], or null.
+double? _coordinate(Object? value, double limit) {
+  if (value is! num) return null;
+  final number = value.toDouble();
+  return number.abs() <= limit ? number : null;
 }
 
 /// Reads a Firestore Timestamp (or DateTime) without importing Firestore here.

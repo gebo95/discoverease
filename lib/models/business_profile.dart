@@ -73,6 +73,12 @@ class BusinessExperience {
     this.availabilityMessage = '',
     this.endsAt,
     this.photos = const [],
+    this.whyYoullLoveIt = '',
+    this.perfectFor = const [],
+    this.features = const [],
+    this.latitude,
+    this.longitude,
+    this.highlight = '',
   });
 
   final String id;
@@ -87,6 +93,21 @@ class BusinessExperience {
   /// private upload paths while still waiting for review. [imageUrl] mirrors
   /// the cover once approved.
   final List<String> photos;
+
+  /// Owner-written "Why you'll love it" paragraph.
+  final String whyYoullLoveIt;
+
+  /// Chosen "Perfect for" and "What makes it special" tags (see
+  /// experience_options.dart for the allowed choices and caps).
+  final List<String> perfectFor;
+  final List<String> features;
+
+  /// Optional map pin for directions. Both are set or both are missing.
+  final double? latitude;
+  final double? longitude;
+
+  /// Optional highlight tag shown on the card (see [highlightOptions]).
+  final String highlight;
 
   /// 'live', 'hidden' (owner paused it) or 'ended' (its end date passed).
   /// Only meaningful once the experience is published; changed by a Cloud
@@ -155,6 +176,12 @@ class BusinessExperience {
     'hours': hours,
     'schedule': schedule,
     'photos': photos,
+    'whyYoullLoveIt': whyYoullLoveIt,
+    'perfectFor': perfectFor,
+    'features': features,
+    'latitude': ?latitude,
+    'longitude': ?longitude,
+    'highlight': highlight,
   };
 
   factory BusinessExperience.fromJson(Map<String, Object?> json) {
@@ -192,8 +219,27 @@ class BusinessExperience {
       availabilityMessage: json['availabilityMessage'] as String? ?? '',
       endsAt: _dateTime(json['endsAt']),
       photos: _photoList(json['photos']),
+      whyYoullLoveIt: json['whyYoullLoveIt'] as String? ?? '',
+      perfectFor: _photoList(json['perfectFor']),
+      features: _photoList(json['features']),
+      latitude: _coordinate(json['latitude'], 90),
+      longitude: _coordinate(json['longitude'], 180),
+      highlight: json['highlight'] as String? ?? '',
     );
   }
+}
+
+/// "25.04430, -77.35040", or '' when there is no pin.
+String pinText(double? latitude, double? longitude) =>
+    latitude == null || longitude == null
+    ? ''
+    : '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
+
+/// A coordinate within +/- [limit], or null.
+double? _coordinate(Object? value, double limit) {
+  if (value is! num) return null;
+  final number = value.toDouble();
+  return number.abs() <= limit ? number : null;
 }
 
 List<String> _photoList(Object? value) =>
@@ -249,6 +295,12 @@ class ExperienceRevision {
     this.hours = '',
     this.schedule = '',
     this.photos = const [],
+    this.whyYoullLoveIt = '',
+    this.perfectFor = const [],
+    this.features = const [],
+    this.latitude,
+    this.longitude,
+    this.highlight = '',
   });
 
   factory ExperienceRevision.fromExperience(BusinessExperience experience) =>
@@ -269,6 +321,12 @@ class ExperienceRevision {
         hours: experience.hours,
         schedule: experience.schedule,
         photos: experience.photos,
+        whyYoullLoveIt: experience.whyYoullLoveIt,
+        perfectFor: experience.perfectFor,
+        features: experience.features,
+        latitude: experience.latitude,
+        longitude: experience.longitude,
+        highlight: experience.highlight,
       );
 
   factory ExperienceRevision.fromJson(Map<String, Object?> json) {
@@ -290,6 +348,12 @@ class ExperienceRevision {
       hours: text('hours'),
       schedule: text('schedule'),
       photos: _photoList(json['photos']),
+      whyYoullLoveIt: text('whyYoullLoveIt'),
+      perfectFor: _photoList(json['perfectFor']),
+      features: _photoList(json['features']),
+      latitude: _coordinate(json['latitude'], 90),
+      longitude: _coordinate(json['longitude'], 180),
+      highlight: text('highlight'),
     );
   }
 
@@ -312,6 +376,13 @@ class ExperienceRevision {
   /// Proposed photos, cover first (see [BusinessExperience.photos]).
   final List<String> photos;
 
+  final String whyYoullLoveIt;
+  final List<String> perfectFor;
+  final List<String> features;
+  final double? latitude;
+  final double? longitude;
+  final String highlight;
+
   Map<String, Object?> toJson() => {
     'title': title,
     'description': description,
@@ -329,6 +400,12 @@ class ExperienceRevision {
     'hours': hours,
     'schedule': schedule,
     'photos': photos,
+    'whyYoullLoveIt': whyYoullLoveIt,
+    'perfectFor': perfectFor,
+    'features': features,
+    'latitude': ?latitude,
+    'longitude': ?longitude,
+    'highlight': highlight,
   };
 
   /// Trimmed text with web links in their stored form, so comparing and
@@ -350,6 +427,12 @@ class ExperienceRevision {
     hours: hours.trim(),
     schedule: schedule.trim(),
     photos: photos,
+    whyYoullLoveIt: whyYoullLoveIt.trim(),
+    perfectFor: perfectFor,
+    features: features,
+    latitude: latitude,
+    longitude: longitude,
+    highlight: highlight.trim(),
   );
 
   /// What this revision would change on [live], in a form a reviewer can read.
@@ -377,6 +460,12 @@ class ExperienceRevision {
     compare('Booking link', current.bookingUrl, proposed.bookingUrl);
     compare('Hours', current.hours, proposed.hours);
     compare('Schedule', current.schedule, proposed.schedule);
+    compare('Highlight', current.highlight, proposed.highlight);
+    compare('Map pin', pinText(current.latitude, current.longitude),
+        pinText(proposed.latitude, proposed.longitude));
+    compare("Why you'll love it", current.whyYoullLoveIt, proposed.whyYoullLoveIt);
+    compare('Perfect for', current.perfectFor.join(', '), proposed.perfectFor.join(', '));
+    compare('What makes it special', current.features.join(', '), proposed.features.join(', '));
     // Putting the same photos in a different order only changes the cover,
     // which needs no review, so only added or removed photos count.
     if (!samePhotoSet(current.photos, proposed.photos)) {

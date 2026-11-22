@@ -9,7 +9,10 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../models/listing.dart';
+import '../../../models/business_pulse.dart';
+import '../../../repositories/business_pulse_repository.dart';
 import '../../../repositories/listing_repository.dart';
+import '../../../shared/components/badges/de_pulse_badge.dart';
 import '../../../repositories/saved_repository.dart';
 import '../../../repositories/trip_repository.dart';
 import '../../../services/firebase_engagement_service.dart';
@@ -19,6 +22,7 @@ import '../../../shared/components/sections/de_traveler_tips_section.dart';
 import '../../../shared/theme/de_colors.dart';
 import '../../../shared/theme/de_radius.dart';
 import '../../../shared/theme/de_spacing.dart';
+import '../../../shared/utils/directions.dart';
 import '../../../shared/utils/web_link.dart';
 
 class ListingDetailPage extends StatefulWidget {
@@ -43,6 +47,20 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
         '[DiscoverEase analytics] Detail opened: '
         'businessListing=$isBusinessListing, signedIn=$isSignedIn',
       );
+    }
+    if (!listing.isUnavailable) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // The popup shows once per post; the banner on the page stays, and
+        // tapping it opens the popup whenever the traveler wants. Viewing it
+        // also stops the flashing dot on cards.
+        final pulses = context.read<BusinessPulseRepository?>();
+        final pulse = pulses?.forListing(listing.id);
+        if (pulses != null && pulse != null && !pulses.isSeen(pulse)) {
+          pulses.markSeen(pulse);
+          showPulseSheet(context, pulse);
+        }
+      });
     }
     if (isBusinessListing && isSignedIn && !listing.isUnavailable) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -105,6 +123,19 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
                   _UnavailableBanner(unavailability: listing.unavailability!),
                   const SizedBox(height: DESpacing.md),
                 ],
+                if (!listing.isUnavailable)
+                  Builder(
+                    builder: (context) {
+                      final pulse = context
+                          .watch<BusinessPulseRepository?>()
+                          ?.forListing(listing.id);
+                      if (pulse == null) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: DESpacing.md),
+                        child: _PulseBanner(pulse: pulse),
+                      );
+                    },
+                  ),
                 Text(
                   listing.title,
                   style: const TextStyle(
@@ -752,10 +783,23 @@ class _KnowBeforeYouGo extends StatelessWidget {
     final website = parseWebLink(listing.website);
     final booking = parseWebLink(listing.bookingUrl);
     final phoneDigits = listing.phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final directions = directionsUri(
+      latitude: listing.latitude,
+      longitude: listing.longitude,
+      address: listing.address,
+      destination: listing.destination,
+    );
     final rows = <({IconData icon, String label, String value, VoidCallback? onTap})>[
       (icon: Icons.place_outlined, label: 'Area', value: listing.location, onTap: null),
-      if (listing.address.trim().isNotEmpty)
-        (icon: Icons.signpost_outlined, label: 'Address', value: listing.address.trim(), onTap: null),
+      if (listing.address.trim().isNotEmpty || directions != null)
+        (
+          icon: Icons.signpost_outlined,
+          label: directions != null ? 'Directions' : 'Address',
+          value: listing.address.trim().isNotEmpty
+              ? listing.address.trim()
+              : 'Open in maps',
+          onTap: directions == null ? null : () => _openLink(context, directions),
+        ),
       (icon: Icons.category_outlined, label: 'Type', value: listing.subcategory, onTap: null),
       (icon: Icons.payments_outlined, label: 'Price', value: listing.price, onTap: null),
       if (listing.hours.trim().isNotEmpty)
@@ -1403,4 +1447,94 @@ class _UnavailableBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+
+/// A live Pulse on the listing page. Tap it to open it as a popup again.
+class _PulseBanner extends StatelessWidget {
+  const _PulseBanner({required this.pulse});
+
+  final BusinessPulse pulse;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(DERadius.large),
+      onTap: () {
+        context.read<BusinessPulseRepository?>()?.markSeen(pulse);
+        showPulseSheet(context, pulse);
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(DESpacing.md),
+        decoration: BoxDecoration(
+          color: DEColors.border.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(DERadius.large),
+        ),
+        child: Row(
+          children: [
+            DEPulseBadge(label: pulse.tag, animate: false),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                pulse.message.isNotEmpty
+                    ? pulse.message
+                    : pulse.untilLabel(DateTime.now()),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: DEColors.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: DEColors.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The Pulse as a quick popup: what is happening, the business's message and
+/// how long it lasts.
+Future<void> showPulseSheet(BuildContext context, BusinessPulse pulse) {
+  return showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const DEPulseBadge(label: 'Happening now'),
+            const SizedBox(height: 14),
+            Text(
+              pulse.tag,
+              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
+            ),
+            if (pulse.message.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(pulse.message, style: const TextStyle(fontSize: 16)),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              '${pulse.title} · ${pulse.untilLabel(DateTime.now())}',
+              style: const TextStyle(color: DEColors.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(sheetContext),
+                child: const Text('Got it'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

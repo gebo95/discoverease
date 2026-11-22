@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../repositories/destination_repository.dart';
-import '../../explore/pages/explore_page.dart';
+import 'de_category_row.dart';
 import '../../../shared/components/sections/de_section_header.dart';
 import '../../../shared/theme/de_radius.dart';
 import '../../../shared/theme/de_spacing.dart';
@@ -27,11 +27,7 @@ class ExploreByAreaSection extends StatelessWidget {
           title: "🏝 Explore by Area",
           subtitle: "Discover what each part of the destination has to offer.",
           actionText: "View Areas →",
-          onAction: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ExplorePage()),
-            );
-          },
+          onAction: () => openExploreFrom(context),
         ),
         SizedBox(
           height: 150,
@@ -44,13 +40,7 @@ class ExploreByAreaSection extends StatelessWidget {
               return _AreaCard(
                 name: area.name,
                 imageUrl: area.imageUrl,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ExplorePage(initialAreaId: area.id),
-                    ),
-                  );
-                },
+                onTap: () => openExploreFrom(context, areaId: area.id),
               );
             },
           ),

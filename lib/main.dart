@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import 'package:provider/provider.dart';
 
+import 'repositories/business_pulse_repository.dart';
 import 'repositories/listing_repository.dart';
 import 'repositories/saved_repository.dart';
 import 'repositories/trip_repository.dart';
@@ -16,6 +17,7 @@ import 'services/experience_photo_service.dart';
 import 'services/firebase_account_service.dart';
 import 'services/firebase_user_data_store.dart';
 import 'services/account_sync_coordinator.dart';
+import 'services/firebase_business_pulse_service.dart';
 import 'services/firebase_business_service.dart';
 import 'services/firebase_catalog_sync_service.dart';
 import 'services/firebase_unavailability_sync_service.dart';
@@ -34,6 +36,13 @@ Future<void> main() async {
         Provider(create: (_) => FirebaseAccountService()),
         Provider(create: (_) => FirebaseUserDataStore()),
         Provider(create: (_) => FirebaseBusinessService()),
+        Provider(create: (_) => FirebaseBusinessPulseService()),
+        ChangeNotifierProvider(
+          lazy: false,
+          create: (context) => BusinessPulseRepository(
+            source: context.read<FirebaseBusinessPulseService>().watchActive(),
+          ),
+        ),
         Provider(create: (_) => ExperiencePhotoService()),
         Provider(create: (_) => FirebaseAdminReviewService()),
         Provider(create: (_) => FirebaseEngagementService()),

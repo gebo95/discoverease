@@ -55,6 +55,16 @@ class FirebaseBusinessService {
     photoUrl: photoUrl,
   );
 
+  /// Fixes the business name. It applies right away, and a Cloud Function
+  /// copies it onto the business's public listings.
+  Future<void> renameBusiness({required String uid, required String name}) async {
+    final cleaned = name.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (cleaned.isEmpty || cleaned.length > 100) {
+      throw StateError('Enter a business name up to 100 characters.');
+    }
+    await _business(uid).update({'name': cleaned});
+  }
+
   /// A fresh experience id, so photos can be uploaded to their folder before
   /// the experience itself is submitted.
   String newExperienceId(String uid) =>
@@ -184,6 +194,12 @@ class FirebaseBusinessService {
     String hours = '',
     String schedule = '',
     List<String> photos = const [],
+    String whyYoullLoveIt = '',
+    List<String> perfectFor = const [],
+    List<String> features = const [],
+    double? latitude,
+    double? longitude,
+    String highlight = '',
     String? id,
   }) async {
     final reference = _business(uid)
@@ -208,6 +224,12 @@ class FirebaseBusinessService {
       hours: hours.trim(),
       schedule: schedule.trim(),
       photos: photos,
+      whyYoullLoveIt: whyYoullLoveIt.trim(),
+      perfectFor: perfectFor,
+      features: features,
+      latitude: latitude,
+      longitude: longitude,
+      highlight: highlight.trim(),
     );
     await reference.set({
       ...experience.toJson(),
@@ -293,6 +315,12 @@ class FirebaseBusinessService {
         'hours': experience.hours.trim(),
         'schedule': experience.schedule.trim(),
         'photos': experience.photos,
+        'whyYoullLoveIt': experience.whyYoullLoveIt.trim(),
+        'perfectFor': experience.perfectFor,
+        'features': experience.features,
+        'latitude': experience.latitude ?? FieldValue.delete(),
+        'longitude': experience.longitude ?? FieldValue.delete(),
+        'highlight': experience.highlight.trim(),
         'updatedAt': FieldValue.serverTimestamp(),
         if (resubmitting) ...{
           'status': 'pending_review',

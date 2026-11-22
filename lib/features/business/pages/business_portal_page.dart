@@ -7,14 +7,22 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/business_profile.dart';
+import '../../../models/business_pulse.dart';
+import '../../../repositories/business_pulse_repository.dart';
+import '../../../services/firebase_business_pulse_service.dart';
 import '../../../models/business_analytics.dart';
 import '../../../models/destination.dart';
+import '../../../models/experience_options.dart';
 import '../../../repositories/destination_repository.dart';
 import '../../../services/experience_photo_service.dart';
 import '../../../services/firebase_business_service.dart';
 import '../../../services/firebase_engagement_service.dart';
 import '../../../shared/utils/photo_files.dart';
 import '../../../shared/utils/web_link.dart';
+import '../widgets/address_field.dart';
+import '../widgets/choice_fields.dart';
+import '../widgets/hours_schedule_fields.dart';
+import '../widgets/photo_thumb.dart';
 
 class BusinessPortalPage extends StatelessWidget {
   const BusinessPortalPage({super.key});
@@ -191,7 +199,21 @@ class _BusinessDashboard extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text(profile.name, style: Theme.of(context).textTheme.headlineSmall),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                profile.name,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Edit business name',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () => _editName(context, businesses),
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
         Text(profile.email),
         const SizedBox(height: 16),
@@ -256,7 +278,14 @@ class _BusinessDashboard extends StatelessWidget {
                     padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
-                        const Icon(Icons.local_activity_outlined),
+                        PhotoThumb(
+                          // The first photo is the cover, whether approved
+                          // or still waiting for review.
+                          entry: experience.photos.isNotEmpty
+                              ? experience.photos.first
+                              : experience.imageUrl,
+                          service: context.read<ExperiencePhotoService>(),
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -369,6 +398,59 @@ Future<void> _withdrawRevision(
     messenger.showSnackBar(
       const SnackBar(content: Text('Could not remove the changes. Try again.')),
     );
+  }
+}
+
+extension on _BusinessDashboard {
+  Future<void> _editName(
+    BuildContext context,
+    FirebaseBusinessService businesses,
+  ) async {
+    final controller = TextEditingController(text: profile.name);
+    final messenger = ScaffoldMessenger.of(context);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit business name'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              maxLength: 100,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Business name'),
+            ),
+            const Text('The new name shows right away, including on your listings.'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null) return;
+    try {
+      await businesses.renameBusiness(uid: uid, name: name);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Business name updated.')),
+      );
+    } on StateError catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not change the name. Try again.')),
+      );
+    }
   }
 }
 
@@ -618,9 +700,15 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
   final _formKey = GlobalKey<FormState>();
   final _title = TextEditingController();
   final _description = TextEditingController();
-  final _subcategory = TextEditingController();
+  final _why = TextEditingController();
+  List<String> _subcategories = [];
+  String _price = '';
+  List<String> _perfectFor = [];
+  List<String> _features = [];
+  String _highlight = '';
+  double? _latitude;
+  double? _longitude;
   final _location = TextEditingController();
-  final _price = TextEditingController();
   final _address = TextEditingController();
   final _phone = TextEditingController();
   final _website = TextEditingController();
@@ -657,9 +745,15 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
       _photos.addAll(source.photos);
       _title.text = source.title;
       _description.text = source.description;
-      _subcategory.text = source.subcategory;
+      _subcategories = splitSubcategories(source.subcategory);
+      _why.text = source.whyYoullLoveIt;
+      _perfectFor = [...source.perfectFor];
+      _features = [...source.features];
+      _highlight = source.highlight;
+      _latitude = source.latitude;
+      _longitude = source.longitude;
       _location.text = source.location;
-      _price.text = source.price;
+      _price = source.price;
       _address.text = source.address;
       _phone.text = source.phone;
       _website.text = source.website;
@@ -674,9 +768,8 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
   void dispose() {
     _title.dispose();
     _description.dispose();
-    _subcategory.dispose();
+    _why.dispose();
     _location.dispose();
-    _price.dispose();
     _address.dispose();
     _phone.dispose();
     _website.dispose();
@@ -740,18 +833,73 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
             ),
             const SizedBox(height: 12),
             _requiredField(_location, 'Area or neighborhood'),
-            _plainField(_subcategory, 'Subcategory (optional)'),
-            _plainField(_price, 'Price range (optional)'),
+            const SizedBox(height: 4),
+            MultiChoiceField(
+              label: 'Type',
+              hint:
+                  'Pick up to $maxSubcategories. A bar can also be a party or beach spot, '
+                  'and it will show up under each one (optional).',
+              options: subcategoryChoices(_category, current: _subcategories),
+              selected: _subcategories,
+              max: maxSubcategories,
+              onChanged: (value) => setState(() => _subcategories = value),
+            ),
+            SingleChoiceField(
+              label: 'Price',
+              hint: r'How expensive is it? $ is budget friendly, $$$$ is a splurge.',
+              options: priceLevels,
+              captions: priceCaptions,
+              value: _price,
+              isRequired: true,
+              onChanged: (value) => setState(() => _price = value),
+            ),
+            _plainField(
+              _why,
+              "Why you'll love it (optional)",
+              maxLines: 4,
+              validator: _maxLength(whyYoullLoveItMax),
+            ),
+            MultiChoiceField(
+              label: 'Perfect for',
+              hint: 'Who is it great for? Pick up to $maxTagChoices.',
+              options: perfectForOptions,
+              selected: _perfectFor,
+              max: maxTagChoices,
+              onChanged: (value) => setState(() => _perfectFor = value),
+            ),
+            MultiChoiceField(
+              label: 'What makes it special',
+              hint: 'Pick up to $maxTagChoices.',
+              options: featureOptions,
+              selected: _features,
+              max: maxTagChoices,
+              onChanged: (value) => setState(() => _features = value),
+            ),
+            SingleChoiceField(
+              label: 'Highlight tag',
+              hint: 'One tag shown on your card, like "Local Favorite" (optional).',
+              options: highlightOptions,
+              value: _highlight,
+              onChanged: (value) => setState(() => _highlight = value),
+            ),
             const SizedBox(height: 8),
             Text(
               'Details travelers will see (all optional)',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
-            _plainField(
-              _address,
-              'Street address',
+            AddressField(
+              controller: _address,
+              latitude: _latitude,
+              longitude: _longitude,
+              destinationName: _destination?.name ?? '',
+              centerLatitude: _destination?.latitude,
+              centerLongitude: _destination?.longitude,
               validator: _maxLength(200),
+              onPinChanged: (latitude, longitude) => setState(() {
+                _latitude = latitude;
+                _longitude = longitude;
+              }),
             ),
             _plainField(
               _phone,
@@ -771,17 +919,13 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
               keyboardType: TextInputType.url,
               validator: _linkValidator,
             ),
-            _plainField(
-              _hours,
-              'Hours (for example Mon-Sat 9am-5pm)',
-              maxLines: 2,
-              validator: _maxLength(300),
+            HoursField(
+              initialText: _hours.text,
+              onChanged: (text) => _hours.text = text,
             ),
-            _plainField(
-              _schedule,
-              'When it happens (for example Fri and Sat 8pm)',
-              maxLines: 2,
-              validator: _maxLength(300),
+            ScheduleField(
+              initialText: _schedule.text,
+              onChanged: (text) => _schedule.text = text,
             ),
             const SizedBox(height: 24),
             _PhotoEditor(
@@ -929,11 +1073,11 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           title: _title.text,
           description: _description.text,
           category: _category,
-          subcategory: _subcategory.text,
+          subcategory: joinSubcategories(_subcategories),
           destinationId: _destination!.id,
           destination: _destination!.name,
           location: _location.text,
-          price: _price.text,
+          price: _price,
           imageUrl: '',
           address: _address.text,
           website: _website.text,
@@ -942,6 +1086,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           hours: _hours.text,
           schedule: _schedule.text,
           photos: List.of(_photos),
+          whyYoullLoveIt: _why.text,
+          perfectFor: List.of(_perfectFor),
+          features: List.of(_features),
+          latitude: _latitude,
+          longitude: _longitude,
+          highlight: _highlight,
           id: _experienceId,
         );
       } else if (existing.status == 'published') {
@@ -949,11 +1099,11 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           title: _title.text,
           description: _description.text,
           category: _category,
-          subcategory: _subcategory.text,
+          subcategory: joinSubcategories(_subcategories),
           destinationId: _destination!.id,
           destination: _destination!.name,
           location: _location.text,
-          price: _price.text,
+          price: _price,
           imageUrl: existing.imageUrl,
           address: _address.text,
           website: _website.text,
@@ -962,6 +1112,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
           hours: _hours.text,
           schedule: _schedule.text,
           photos: List.of(_photos),
+          whyYoullLoveIt: _why.text,
+          perfectFor: List.of(_perfectFor),
+          features: List.of(_features),
+          latitude: _latitude,
+          longitude: _longitude,
+          highlight: _highlight,
         ).normalized();
         // Choosing a different cover among photos that are already approved
         // takes effect right away; it never goes through review.
@@ -1004,11 +1160,11 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
             title: _title.text,
             description: _description.text,
             category: _category,
-            subcategory: _subcategory.text,
+            subcategory: joinSubcategories(_subcategories),
             destinationId: _destination!.id,
             destination: _destination!.name,
             location: _location.text,
-            price: _price.text,
+            price: _price,
             imageUrl: existing.imageUrl,
             status: existing.status,
             reviewNote: existing.reviewNote,
@@ -1019,6 +1175,12 @@ class _BusinessExperienceFormPageState extends State<BusinessExperienceFormPage>
             hours: _hours.text,
             schedule: _schedule.text,
             photos: List.of(_photos),
+            whyYoullLoveIt: _why.text,
+            perfectFor: List.of(_perfectFor),
+            features: List.of(_features),
+            latitude: _latitude,
+            longitude: _longitude,
+            highlight: _highlight,
           ),
         );
       }
@@ -1117,7 +1279,7 @@ String? _availabilityNote(BusinessExperience experience) {
   return null;
 }
 
-enum _ExperienceAction { hide, show, setEnd, clearEnd, delete }
+enum _ExperienceAction { pulse, hide, show, setEnd, clearEnd, delete }
 
 class _ExperienceMenu extends StatelessWidget {
   const _ExperienceMenu({
@@ -1136,7 +1298,19 @@ class _ExperienceMenu extends StatelessWidget {
     return PopupMenuButton<_ExperienceAction>(
       tooltip: 'More actions',
       onSelected: (action) => _run(context, action),
-      itemBuilder: (_) => [
+      itemBuilder: (menuContext) => [
+        if (live && experience.availability == 'live')
+          PopupMenuItem(
+            value: _ExperienceAction.pulse,
+            child: Text(
+              menuContext
+                          .read<BusinessPulseRepository?>()
+                          ?.forListing(experience.id) !=
+                      null
+                  ? 'Update or end Pulse'
+                  : 'Post a Pulse',
+            ),
+          ),
         if (live && experience.availability == 'live')
           const PopupMenuItem(
             value: _ExperienceAction.hide,
@@ -1187,6 +1361,19 @@ class _ExperienceMenu extends StatelessWidget {
     }
 
     switch (action) {
+      case _ExperienceAction.pulse:
+        final posted = await showDialog<String>(
+          context: context,
+          builder: (_) => _PulseDialog(
+            uid: uid,
+            experience: experience,
+            service: context.read<FirebaseBusinessPulseService>(),
+            current: context
+                .read<BusinessPulseRepository?>()
+                ?.forListing(experience.id),
+          ),
+        );
+        if (posted != null) messenger.showSnackBar(SnackBar(content: Text(posted)));
       case _ExperienceAction.hide:
         final note = await _askForNotice(
           context,
@@ -1548,6 +1735,164 @@ class _PhotoTileState extends State<_PhotoTile> {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+/// Post, replace or end a listing's Pulse. Pops with a short message to show,
+/// or nothing when cancelled.
+class _PulseDialog extends StatefulWidget {
+  const _PulseDialog({
+    required this.uid,
+    required this.experience,
+    required this.service,
+    this.current,
+  });
+
+  final String uid;
+  final BusinessExperience experience;
+  final FirebaseBusinessPulseService service;
+  final BusinessPulse? current;
+
+  @override
+  State<_PulseDialog> createState() => _PulseDialogState();
+}
+
+class _PulseDialogState extends State<_PulseDialog> {
+  final _message = TextEditingController();
+  String _tag = '';
+  int _hours = 6;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _tag = widget.current?.tag ?? '';
+    _message.text = widget.current?.message ?? '';
+  }
+
+  @override
+  void dispose() {
+    _message.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<void> Function() work, String done) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await work();
+      if (mounted) Navigator.pop(context, done);
+    } on StateError catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not update the Pulse. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = widget.current;
+    return AlertDialog(
+      title: Text(current == null ? 'Post a Pulse' : 'Update your Pulse'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              current == null
+                  ? 'Let travelers know what is happening. It shows on your card and in Happening now, with no review needed.'
+                  : 'Live now: ${current.tag} · ${current.untilLabel(DateTime.now())}. Posting again replaces it.',
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final tag in businessPulseTags)
+                  ChoiceChip(
+                    label: Text(tag),
+                    selected: _tag == tag,
+                    onSelected: _busy ? null : (_) => setState(() => _tag = tag),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _message,
+              maxLength: businessPulseMessageMax,
+              enabled: !_busy,
+              decoration: const InputDecoration(
+                labelText: 'Short message (optional)',
+                helperText: 'Plain text, no links. For example "Band starts at 8".',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('Stays up for'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final hours in businessPulseHours)
+                  ChoiceChip(
+                    label: Text(pulseDurationLabel(hours)),
+                    selected: _hours == hours,
+                    onSelected: _busy ? null : (_) => setState(() => _hours = hours),
+                  ),
+              ],
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        if (current != null)
+          TextButton(
+            onPressed: _busy
+                ? null
+                : () => _run(
+                    () => widget.service.end(
+                      uid: widget.uid,
+                      experienceId: widget.experience.id,
+                    ),
+                    'Pulse ended.',
+                  ),
+            child: const Text('End Pulse'),
+          ),
+        FilledButton(
+          onPressed: _busy || _tag.isEmpty
+              ? null
+              : () => _run(
+                  () => widget.service.post(
+                    uid: widget.uid,
+                    experienceId: widget.experience.id,
+                    tag: _tag,
+                    hours: _hours,
+                    message: _message.text,
+                  ),
+                  'Pulse is live.',
+                ),
+          child: Text(current == null ? 'Post' : 'Replace'),
+        ),
+      ],
     );
   }
 }

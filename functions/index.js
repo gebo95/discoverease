@@ -1,13 +1,14 @@
 const { initializeApp } = require('firebase-admin/app');
 const { FieldValue, Timestamp, getFirestore } = require('firebase-admin/firestore');
 const { setGlobalOptions } = require('firebase-functions/v2');
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onDocumentUpdated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { HttpsError, onCall } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { getStorage } = require('firebase-admin/storage');
 const logger = require('firebase-functions/logger');
 const { planTransition } = require('./availability_logic');
 const { planPhotoPublish, planSetCover } = require('./photos_logic');
+const { planPulse } = require('./pulse_logic');
 const {
   SHARE_DAILY_CAP,
   digest,
@@ -526,5 +527,137 @@ exports.publishExperiencePhotos = onCall(
       throw new HttpsError('internal', 'Could not publish the photos. Make sure each one finished uploading.');
     }
     return { photos: plan.urls };
+  },
+);
+
+// The business name is copied onto each public listing, so when an owner
+// corrects it the listings are updated to match (hidden ones included).
+exports.syncBusinessName = onDocumentUpdated('businesses/{businessId}', async (event) => {
+  const before = event.data?.before.data()?.name;
+  const after = event.data?.after.data()?.name;
+  if (typeof after !== 'string' || !after || before === after) return;
+  const { businessId } = event.params;
+  const listings = await db.collection('catalog').where('businessId', '==', businessId).get();
+  for (let i = 0; i < listings.docs.length; i += 400) {
+    const batch = db.batch();
+    for (const listing of listings.docs.slice(i, i + 400)) {
+      batch.update(listing.ref, { businessName: after, subtitle: after });
+    }
+    await batch.commit();
+  }
+  logger.info('Business renamed', { businessId, listings: listings.size });
+});
+
+// ---------------------------------------------------------------------------
+// Business Pulse: a short timely update on a listing ("Live music tonight").
+// One per listing, stored at pulses/{experienceId} and readable by everyone;
+// only these functions write it. The text is capped, plain and link-free, so it
+// goes live at once instead of waiting for review.
+// ---------------------------------------------------------------------------
+
+exports.postPulse = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    const { businessId, experienceId, tag, message, hours } = request.data || {};
+    if (!isValidListingId(businessId) || !isValidListingId(experienceId)) {
+      throw new HttpsError('invalid-argument', 'A business and experience are required.');
+    }
+    const experienceRef = db
+      .collection('businesses').doc(businessId)
+      .collection('experiences').doc(experienceId);
+    const pulseRef = db.collection('pulses').doc(experienceId);
+    try {
+      return await db.runTransaction(async (transaction) => {
+        await assertOwnsBusiness(request, businessId, transaction);
+        const [experienceSnap, pulseSnap] = await Promise.all([
+          transaction.get(experienceRef),
+          transaction.get(pulseRef),
+        ]);
+        const experience = experienceSnap.exists ? experienceSnap.data() : undefined;
+        const plan = planPulse({
+          experience,
+          tag,
+          message,
+          hours,
+          existing: pulseSnap.exists ? pulseSnap.data() : undefined,
+          now: new Date(),
+        });
+        if (!plan.ok) throw new HttpsError(plan.code, plan.message);
+        transaction.set(pulseRef, {
+          listingId: experienceId,
+          businessId,
+          destinationId: experience.destinationId || '',
+          title: experience.title || '',
+          category: experience.category || '',
+          imageUrl: experience.imageUrl || '',
+          tag: plan.pulse.tag,
+          message: plan.pulse.message,
+          startsAt: Timestamp.fromDate(plan.pulse.startsAt),
+          expiresAt: Timestamp.fromDate(plan.pulse.expiresAt),
+        });
+        return { expiresAt: plan.pulse.expiresAt.toISOString() };
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to post a Pulse.', { experienceId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not post the Pulse.');
+    }
+  },
+);
+
+exports.endPulse = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    const { businessId, experienceId } = request.data || {};
+    if (!isValidListingId(businessId) || !isValidListingId(experienceId)) {
+      throw new HttpsError('invalid-argument', 'A business and experience are required.');
+    }
+    try {
+      await db.runTransaction(async (transaction) => {
+        await assertOwnsBusiness(request, businessId, transaction);
+        const pulseRef = db.collection('pulses').doc(experienceId);
+        const pulse = await transaction.get(pulseRef);
+        // A Pulse belongs to the business that posted it.
+        if (pulse.exists && pulse.data().businessId === businessId) {
+          transaction.delete(pulseRef);
+        }
+      });
+      return { ended: true };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to end a Pulse.', { experienceId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not end the Pulse.');
+    }
+  },
+);
+
+// Expired Pulses are already hidden by the app; this tidies them away. Hiding or
+// deleting a listing ends its Pulse straight away as well, so nobody sees
+// "Live music" on something that is no longer available.
+exports.cleanupExpiredPulses = onSchedule(
+  { schedule: 'every 60 minutes', timeZone: 'UTC' },
+  async () => {
+    const now = new Date();
+    const expired = await db
+      .collection('pulses')
+      .where('expiresAt', '<=', Timestamp.fromDate(now))
+      .limit(400)
+      .get();
+    const batch = db.batch();
+    expired.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    logger.info('Removed expired Pulses.', { removed: expired.size });
+  },
+);
+
+// When a listing stops being available, its Pulse goes with it.
+exports.endPulseWhenUnavailable = onDocumentWritten(
+  'catalog/{listingId}',
+  async (event) => {
+    const after = event.data?.after.data();
+    if (after && after.status === 'published') return;
+    const pulseRef = db.collection('pulses').doc(event.params.listingId);
+    const pulse = await pulseRef.get();
+    if (pulse.exists) await pulseRef.delete();
   },
 );

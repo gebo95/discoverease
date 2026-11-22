@@ -4,6 +4,7 @@ import '../../theme/de_colors.dart';
 import '../../theme/de_radius.dart';
 import '../../theme/de_spacing.dart';
 import '../../theme/de_text_styles.dart';
+import '../badges/de_pulse_line.dart';
 
 class DEListingCard extends StatelessWidget {
   final String title;
@@ -15,8 +16,15 @@ class DEListingCard extends StatelessWidget {
   final String price;
   final String status;
   final String? pulse;
+
+  /// Lets the card show the business's live Pulse for this listing.
+  final String? listingId;
   final VoidCallback? onTap;
-  final VoidCallback? onPinTap;
+
+  /// Double tapping the card (or tapping its heart) saves or unsaves it. The
+  /// heart only shows while it is saved.
+  final VoidCallback? onToggleSaved;
+  final bool isSaved;
 
   const DEListingCard({
     super.key,
@@ -29,14 +37,17 @@ class DEListingCard extends StatelessWidget {
     required this.price,
     required this.status,
     this.pulse,
+    this.listingId,
     this.onTap,
-    this.onPinTap,
+    this.onToggleSaved,
+    this.isSaved = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      onDoubleTap: onToggleSaved,
       child: Container(
         margin: const EdgeInsets.only(bottom: DESpacing.lg),
         decoration: BoxDecoration(
@@ -71,14 +82,15 @@ class DEListingCard extends StatelessWidget {
                     ),
                   ),
 
-                  Positioned(
-                    top: DESpacing.md,
-                    left: DESpacing.md,
-                    child: _CircleIconButton(
-                      icon: Icons.push_pin_outlined,
-                      onTap: onPinTap,
+                  if (isSaved)
+                    Positioned(
+                      top: DESpacing.md,
+                      left: DESpacing.md,
+                      child: _CircleIconButton(
+                        icon: Icons.favorite_rounded,
+                        onTap: onToggleSaved,
+                      ),
                     ),
-                  ),
 
                   Positioned(
                     top: DESpacing.md,
@@ -136,22 +148,20 @@ class DEListingCard extends StatelessWidget {
                           color: DEColors.textSecondary,
                         ),
                         const SizedBox(width: 2),
-                        Text(location, style: DETextStyles.caption),
+                        Flexible(
+                          child: Text(
+                            location,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: DETextStyles.caption,
+                          ),
+                        ),
                       ],
                     ),
 
-                    if (pulse != null && pulse!.isNotEmpty) ...[
+                    if (listingId != null || (pulse ?? '').isNotEmpty) ...[
                       const SizedBox(height: DESpacing.sm),
-                      Text(
-                        "🔴 $pulse",
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: DEColors.accent,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      DEPulseLine(listingId: listingId ?? '', fallbackText: pulse),
                     ],
                   ],
                 ),

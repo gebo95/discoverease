@@ -34,7 +34,16 @@ service cloud.firestore {
         && (!('schedule' in data) || (data.schedule is string && data.schedule.size() <= 300))
         && (!('website' in data) || validWebLink(data.website))
         && (!('bookingUrl' in data) || validWebLink(data.bookingUrl))
-        && (!('photos' in data) || (data.photos is list && data.photos.size() <= 5));
+        && (!('photos' in data) || (data.photos is list && data.photos.size() <= 5))
+        && (!('whyYoullLoveIt' in data)
+          || (data.whyYoullLoveIt is string && data.whyYoullLoveIt.size() <= 600))
+        && (!('perfectFor' in data) || (data.perfectFor is list && data.perfectFor.size() <= 5))
+        && (!('features' in data) || (data.features is list && data.features.size() <= 5))
+        && (!('latitude' in data)
+          || (data.latitude is number && data.latitude >= -90 && data.latitude <= 90))
+        && (!('highlight' in data) || (data.highlight is string && data.highlight.size() <= 40))
+        && (!('longitude' in data)
+          || (data.longitude is number && data.longitude >= -180 && data.longitude <= 180));
     }
 
     // A proposed change to a live experience. It may only contain reviewable
@@ -45,7 +54,7 @@ service cloud.firestore {
         && rev.keys().hasOnly([
           'title', 'description', 'category', 'subcategory', 'destinationId',
           'destination', 'location', 'price', 'imageUrl', 'address', 'website',
-          'bookingUrl', 'phone', 'hours', 'schedule', 'photos'
+          'bookingUrl', 'phone', 'hours', 'schedule', 'photos', 'whyYoullLoveIt', 'perfectFor', 'features', 'latitude', 'longitude', 'highlight'
         ])
         && rev.keys().hasAll([
           'title', 'description', 'category', 'subcategory', 'destinationId',
@@ -61,6 +70,10 @@ service cloud.firestore {
         && rev.price is string && rev.price.size() <= 50
         && rev.imageUrl == live.imageUrl
         && validExperienceDetails(rev);
+    }
+
+    function validBusinessName(value) {
+      return value is string && value.size() > 0 && value.size() <= 100;
     }
 
     function ownsBusiness(businessId) {
@@ -180,7 +193,8 @@ service cloud.firestore {
             'schemaVersion', 'id', 'ownerUid', 'name', 'email', 'phone',
             'website', 'instagram', 'status', 'verified', 'subscriptionTier',
             'createdAt', 'reviewedAt', 'reviewedBy'
-          ]));
+          ])
+          && validBusinessName(request.resource.data.name));
       // Once a business is published, only an admin may delete its parent.
       // This prevents orphaning public catalog records through owner deletion.
       allow delete: if isAdmin()
@@ -205,7 +219,7 @@ service cloud.firestore {
               'subcategory', 'destinationId', 'destination', 'location',
               'price', 'imageUrl', 'status', 'createdAt', 'updatedAt',
               'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
-              'photos'
+              'photos', 'whyYoullLoveIt', 'perfectFor', 'features', 'latitude', 'longitude', 'highlight'
             ])
             && validExperienceDetails(request.resource.data));
         allow update: if isAdmin()
@@ -221,7 +235,7 @@ service cloud.firestore {
               'pendingRevision', 'revisionStatus', 'revisionNote',
               'revisionSubmittedAt',
               'availability', 'availabilityMessage', 'availabilityChangedAt',
-              'endsAt', 'photos'
+              'endsAt', 'photos', 'whyYoullLoveIt', 'perfectFor', 'features', 'latitude', 'longitude', 'highlight'
             ])
             && validExperienceDetails(request.resource.data)
             && (
@@ -233,7 +247,7 @@ service cloud.firestore {
                     'destinationId', 'destination', 'location', 'price',
                     'imageUrl', 'updatedAt',
                     'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
-                    'photos'
+                    'photos', 'whyYoullLoveIt', 'perfectFor', 'features', 'latitude', 'longitude', 'highlight'
                   ]))
               || (resource.data.status == 'rejected'
                 && request.resource.data.status == 'pending_review'
@@ -247,7 +261,7 @@ service cloud.firestore {
                     'imageUrl', 'updatedAt', 'status', 'reviewNote',
                     'reviewedAt', 'reviewedBy',
                     'address', 'website', 'bookingUrl', 'phone', 'hours', 'schedule',
-                    'photos'
+                    'photos', 'whyYoullLoveIt', 'perfectFor', 'features', 'latitude', 'longitude', 'highlight'
                   ]))
               // Live experiences are never edited directly. The owner can only
               // propose a revision (or withdraw one); an admin applies it.
@@ -281,6 +295,13 @@ service cloud.firestore {
     // Existing nested rules continue to grant owners their scoped access.
     match /{path=**}/experiences/{experienceId} {
       allow get, list: if isAdmin();
+    }
+
+    // Business Pulse posts are public to read and written only by Cloud
+    // Functions, which check ownership, the allowed tags and the text.
+    match /pulses/{listingId} {
+      allow get, list: if true;
+      allow write: if false;
     }
 
     match /catalog/{experienceId} {

@@ -57,12 +57,18 @@ class ListingRepository extends ChangeNotifier {
     String query, {
     String? filter,
     String? areaId,
+    String? category,
   }) {
-    final filteredListings = getFiltered(
+    var filteredListings = getFiltered(
       destination,
       filter,
       areaId: areaId,
     );
+    if (category != null && category.trim().isNotEmpty) {
+      filteredListings = filteredListings
+          .where((listing) => matchesCategory(listing, category))
+          .toList();
+    }
 
     final normalizedQuery = query.trim().toLowerCase();
 
@@ -91,24 +97,23 @@ class ListingRepository extends ChangeNotifier {
     String category, {
     String? areaId,
   }) {
-    final normalizedCategory = category.trim().toLowerCase();
-
     final listings = areaId == null
         ? getForDestination(destination)
         : getForArea(destination, areaId);
-    return listings.where((listing) {
-      final listingCategory = listing.category.toLowerCase();
-      final listingSubcategory = listing.subcategory.toLowerCase();
-      final listingFeatures = listing.features.map(
-        (feature) => feature.toLowerCase(),
-      );
+    return listings
+        .where((listing) => matchesCategory(listing, category))
+        .toList();
+  }
 
-      return listingCategory.contains(normalizedCategory) ||
-          listingSubcategory.contains(normalizedCategory) ||
-          listingFeatures.any(
-            (feature) => feature.contains(normalizedCategory),
-          );
-    }).toList();
+  /// Whether a listing belongs under [category]: in its category, any of its
+  /// types, or its "what makes it special" tags. This is the same test the
+  /// home rows use, so "See all" on a row opens exactly those places.
+  static bool matchesCategory(Listing listing, String category) {
+    final wanted = category.trim().toLowerCase();
+    if (wanted.isEmpty) return true;
+    return listing.category.toLowerCase().contains(wanted) ||
+        listing.subcategory.toLowerCase().contains(wanted) ||
+        listing.features.any((feature) => feature.toLowerCase().contains(wanted));
   }
 
   List<Listing> getLiveNow(String destination, {String? areaId}) {
@@ -245,7 +250,9 @@ class ListingRepository extends ChangeNotifier {
         return listings
             .where(
               (listing) =>
-                  listing.perfectFor.contains("Sunset") ||
+                  listing.perfectFor.any(
+                    (value) => value.toLowerCase().contains("sunset"),
+                  ) ||
                   listing.subtitle.toLowerCase().contains("sunset"),
             )
             .toList();

@@ -41,3 +41,22 @@ Development Firebase Auth, Firestore, and Cloud Functions are integrated.
 Production environment configuration and Storage uploads remain future work.
 Location, weather, places, events, flight, and AI integrations require external
 services and are not simulated. See `docs/14_Backend_Foundation.md`.
+
+## Ideas for later (not scheduled)
+
+**Private events.** An event that is not listed anywhere and opens only from a
+link plus an access code. Needs: no `catalog` entry and no search/Explore
+presence; the code stored only as a salted hash on the server; a callable that
+checks the code (with attempt limits per link and per device) and returns the
+event; owner controls to change or revoke the code and end the event; guest
+list and RSVP questions to settle first.
+
+**Pulse allowance and pricing (scheduled with the subscriptions phase).** Posts, not edits, are what is
+counted. Free monthly allowance per business, more on paid tiers, extra posts
+sold as packs. Fixing a typo in a live post is free and does not extend it;
+changing what is happening, or restarting the clock, is a new post. Needs the
+subscriptions phase first (payments, tiers).
+
+**Pulse notifications.** Not shown on the trip pages (a place not on the trip is
+not relevant there). A saved place posting a Pulse is a good notification once
+push notifications are built.

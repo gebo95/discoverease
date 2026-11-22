@@ -156,9 +156,12 @@ class FirebaseAdminReviewService {
           'status': 'published',
           'displayStatus': 'New',
           'description': currentExperience.description,
-          'whyYoullLoveIt': '',
-          'perfectFor': <String>[],
-          'features': <String>[],
+          'whyYoullLoveIt': currentExperience.whyYoullLoveIt,
+          'perfectFor': currentExperience.perfectFor,
+          'features': currentExperience.features,
+          'latitude': ?currentExperience.latitude,
+          'longitude': ?currentExperience.longitude,
+          'highlight': currentExperience.highlight,
           'pairedListingIds': <String>[],
           'continueDayIds': <String>[],
           'publishedAt': FieldValue.serverTimestamp(),
@@ -234,7 +237,14 @@ class FirebaseAdminReviewService {
       final revision = ExperienceRevision.fromJson(
         Map<String, Object?>.from(data['pendingRevision'] as Map),
       );
-      final content = revision.toJson();
+      // A proposal without a pin removes any pin the listing had.
+      final content = {
+        ...revision.toJson(),
+        if (revision.latitude == null || revision.longitude == null) ...{
+          'latitude': FieldValue.delete(),
+          'longitude': FieldValue.delete(),
+        },
+      };
       final photosNow = (data['pendingRevision'] as Map)['photos'];
       if (requestedPhotos != null &&
           (photosNow is! List ||

@@ -115,11 +115,22 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
       '${experience.destination} · ${experience.category}',
       experience.location,
       if (experience.address.isNotEmpty) 'Address: ${experience.address}',
+      if (experience.latitude != null && experience.longitude != null)
+        'Map pin: ${pinText(experience.latitude, experience.longitude)}',
       if (experience.phone.isNotEmpty) 'Phone: ${experience.phone}',
       if (experience.website.isNotEmpty) 'Website: ${experience.website}',
       if (experience.bookingUrl.isNotEmpty) 'Booking: ${experience.bookingUrl}',
       if (experience.hours.isNotEmpty) 'Hours: ${experience.hours}',
       if (experience.schedule.isNotEmpty) 'Schedule: ${experience.schedule}',
+      if (experience.subcategory.isNotEmpty) 'Type: ${experience.subcategory}',
+      if (experience.price.isNotEmpty) 'Price: ${experience.price}',
+      if (experience.highlight.isNotEmpty) 'Highlight: ${experience.highlight}',
+      if (experience.perfectFor.isNotEmpty)
+        'Perfect for: ${experience.perfectFor.join(', ')}',
+      if (experience.features.isNotEmpty)
+        'Special: ${experience.features.join(', ')}',
+      if (experience.whyYoullLoveIt.isNotEmpty)
+        "Why you'll love it: ${experience.whyYoullLoveIt}",
       'Business ID: $businessId',
       experience.description,
     ].where((value) => value.trim().isNotEmpty).join('\n');

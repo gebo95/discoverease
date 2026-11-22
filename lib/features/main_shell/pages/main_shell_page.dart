@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../main_shell_controller.dart';
 import '../../home/pages/home_page.dart';
 import '../../saved/pages/saved_page.dart';
 import '../../../shared/theme/de_colors.dart';
@@ -16,24 +18,61 @@ class MainShellPage extends StatefulWidget {
 
 class _MainShellPageState extends State<MainShellPage> {
   int _currentIndex = 0;
+  final _controller = MainShellController();
 
-  final _pages = const [
-    HomePage(),
-    ExplorePage(),
-    SavedPage(),
-    TripsPage(),
-    ProfilePage(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onExploreRequested);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onExploreRequested);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onExploreRequested() => setState(() => _currentIndex = 1);
+
+  Widget get _page {
+    switch (_currentIndex) {
+      case 0:
+        return const HomePage();
+      case 1:
+        return ExplorePage(
+          key: ValueKey('explore-${_controller.requestId}'),
+          initialCategory: _controller.category,
+          initialAreaId: _controller.areaId,
+          initialFilter: _controller.filter,
+        );
+      case 2:
+        return const SavedPage();
+      case 3:
+        return const TripsPage();
+      default:
+        return const ProfilePage();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    return ChangeNotifierProvider<MainShellController>.value(
+      value: _controller,
+      child: _scaffold(),
+    );
+  }
+
+  Widget _scaffold() {
     return Scaffold(
-      body: _pages[_currentIndex],
+      body: _page,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         backgroundColor: Colors.white,
         indicatorColor: DEColors.primary.withValues(alpha: 0.12),
         onDestinationSelected: (index) {
+          // Opening Explore from the bar starts from a clean slate.
+          if (index == 1) _controller.clear();
           setState(() {
             _currentIndex = index;
           });

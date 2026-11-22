@@ -10,6 +10,7 @@ const {
   initializeTestEnvironment,
 } = require('@firebase/rules-unit-testing');
 const {
+  collection,
   collectionGroup,
   deleteDoc,
   deleteField,
@@ -613,5 +614,137 @@ test('an owner can attach photos to a pending submission', async () => {
   );
   await assertSucceeds(
     setDoc(doc(owner, 'businesses/biz-1/experiences/exp-2'), experienceDoc('exp-2', { photos: ['pending/biz-1/exp-2/b.jpg'] })),
+  );
+});
+
+// --------------------------------------------- price, tags and why-you'll-love-it
+
+test('an owner can add the extra details when proposing a live change', async () => {
+  await seedLiveExperience();
+  const ref = liveRef(asUser('biz-1'));
+  await assertSucceeds(
+    updateDoc(ref, submitRevisionFields(revisionFor({
+      price: '$$$',
+      whyYoullLoveIt: 'Golden hour on the water.',
+      perfectFor: ['Couples', 'Friends'],
+      features: ['Ocean View', 'Romantic', 'Photo Friendly'],
+    }))),
+  );
+});
+
+test('the extra details are capped in length and number', async () => {
+  await seedLiveExperience();
+  const ref = liveRef(asUser('biz-1'));
+  const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ perfectFor: six }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ features: six }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ whyYoullLoveIt: 'x'.repeat(601) }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ perfectFor: 'Couples' }))));
+});
+
+test('a new submission can include the extra details, within the caps', async () => {
+  await seed(async (db) => setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1')));
+  const owner = asUser('biz-1');
+  await assertSucceeds(
+    setDoc(doc(owner, 'businesses/biz-1/experiences/exp-9'), experienceDoc('exp-9', {
+      whyYoullLoveIt: 'Great views.',
+      perfectFor: ['Couples'],
+      features: ['Ocean View'],
+    })),
+  );
+  await assertFails(
+    setDoc(doc(owner, 'businesses/biz-1/experiences/exp-8'), experienceDoc('exp-8', {
+      features: ['1', '2', '3', '4', '5', '6'],
+    })),
+  );
+});
+
+// ------------------------------------------------------------ business name
+
+const businessRef = (db) => doc(db, 'businesses/biz-1');
+
+test('an owner can correct the business name at any time, approved or not', async () => {
+  await seed(async (db) => setDoc(businessRef(db), businessDoc('biz-1')));
+  await assertSucceeds(updateDoc(businessRef(asUser('biz-1')), { name: 'Island Tours Bahamas' }));
+  await seed(async (db) => setDoc(businessRef(db), businessDoc('biz-1', { status: 'published', verified: true })));
+  await assertSucceeds(updateDoc(businessRef(asUser('biz-1')), { name: 'Island Tours Nassau' }));
+});
+
+test('a business name must be 1 to 100 characters and only the owner can change it', async () => {
+  await seed(async (db) => setDoc(businessRef(db), businessDoc('biz-1', { status: 'published', verified: true })));
+  const owner = asUser('biz-1');
+  await assertFails(updateDoc(businessRef(owner), { name: '' }));
+  await assertFails(updateDoc(businessRef(owner), { name: 'x'.repeat(101) }));
+  await assertFails(updateDoc(businessRef(owner), { name: 7 }));
+  await assertFails(updateDoc(businessRef(asUser('stranger')), { name: 'Hijacked' }));
+  // Renaming does not unlock approval fields.
+  await assertFails(updateDoc(businessRef(owner), { name: 'Fine', verified: false }));
+  await assertFails(updateDoc(businessRef(owner), { name: 'Fine', status: 'pending_review' }));
+});
+
+// ------------------------------------------------------------------- map pin
+
+test('an owner can propose a map pin, but only a real one', async () => {
+  await seedLiveExperience();
+  const ref = liveRef(asUser('biz-1'));
+  await assertSucceeds(updateDoc(ref, submitRevisionFields(revisionFor({ latitude: 25.078, longitude: -77.343 }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ latitude: 95, longitude: 0 }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ latitude: 0, longitude: -181 }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ latitude: '25.1', longitude: 0 }))));
+});
+
+test('a new submission can include a pin and a pending one can be moved', async () => {
+  await seed(async (db) => setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1')));
+  const owner = asUser('biz-1');
+  await assertSucceeds(
+    setDoc(doc(owner, 'businesses/biz-1/experiences/exp-5'), experienceDoc('exp-5', { latitude: 25.1, longitude: -77.3 })),
+  );
+  await assertSucceeds(
+    updateDoc(doc(owner, 'businesses/biz-1/experiences/exp-5'), { latitude: 25.2, longitude: -77.4, updatedAt: now() }),
+  );
+  await assertSucceeds(
+    updateDoc(doc(owner, 'businesses/biz-1/experiences/exp-5'), { latitude: deleteField(), longitude: deleteField(), updatedAt: now() }),
+  );
+  await assertFails(
+    updateDoc(doc(owner, 'businesses/biz-1/experiences/exp-5'), { latitude: 200, updatedAt: now() }),
+  );
+});
+
+test('an owner cannot move the pin on a live experience without review', async () => {
+  await seedLiveExperience();
+  await assertFails(updateDoc(liveRef(asUser('biz-1')), { latitude: 25.2, longitude: -77.4, updatedAt: now() }));
+});
+
+// ------------------------------------------------------------ business pulse
+
+test('anyone can read Pulse posts, but nobody can write them from the app', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'pulses/exp-1'), {
+      listingId: 'exp-1', businessId: 'biz-1', tag: 'Live Music', message: '', expiresAt: now(),
+    }),
+  );
+  await assertSucceeds(getDoc(doc(signedOut(), 'pulses/exp-1')));
+  await assertSucceeds(getDocs(query(collection(signedOut(), 'pulses'), where('expiresAt', '>', new Date(0)))));
+  const post = { listingId: 'exp-2', businessId: 'biz-1', tag: 'Live Music', message: '', expiresAt: now() };
+  await assertFails(setDoc(doc(asUser('biz-1'), 'pulses/exp-2'), post));
+  await assertFails(setDoc(doc(asAdmin(), 'pulses/exp-2'), post));
+  await assertFails(updateDoc(doc(asUser('biz-1'), 'pulses/exp-1'), { message: 'edited' }));
+  await assertFails(deleteDoc(doc(asUser('biz-1'), 'pulses/exp-1')));
+});
+
+// ------------------------------------------------------------- highlight tag
+
+test('an owner can propose a highlight tag, within the length limit', async () => {
+  await seedLiveExperience();
+  const ref = liveRef(asUser('biz-1'));
+  await assertSucceeds(updateDoc(ref, submitRevisionFields(revisionFor({ highlight: 'Local Favorite' }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ highlight: 'x'.repeat(41) }))));
+  await assertFails(updateDoc(ref, submitRevisionFields(revisionFor({ highlight: 5 }))));
+});
+
+test('a new submission can include a highlight tag', async () => {
+  await seed(async (db) => setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1')));
+  await assertSucceeds(
+    setDoc(doc(asUser('biz-1'), 'businesses/biz-1/experiences/exp-7'), experienceDoc('exp-7', { highlight: 'Hidden Gem' })),
   );
 });

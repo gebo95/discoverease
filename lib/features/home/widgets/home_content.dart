@@ -6,6 +6,7 @@ import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/bottom_sheets/de_destination_picker.dart';
 import '../../pulse/pages/pulse_page.dart';
 import '../../trips/pages/trip_dashboard_page.dart';
+import 'business_pulse_section.dart';
 import 'de_category_row.dart';
 import 'discover_this_week_section.dart';
 import 'explore_by_area_section.dart';
@@ -76,6 +77,8 @@ class HomeContent extends StatelessWidget {
           const SizedBox(height: 40),
         ],
 
+        const BusinessPulseSection(),
+
         const DiscoverThisWeekSection(),
 
         const SizedBox(height: 28),
@@ -100,7 +103,11 @@ class HomeContent extends StatelessWidget {
 
           return Padding(
             padding: const EdgeInsets.only(bottom: 28),
-            child: DECategoryRow(title: section.title, listings: listings),
+            child: DECategoryRow(
+              title: section.title,
+              listings: listings,
+              sectionCategory: section.category,
+            ),
           );
         }),
       ],

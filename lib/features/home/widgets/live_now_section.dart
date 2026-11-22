@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'de_category_row.dart';
 
 import '../../../repositories/listing_repository.dart';
 import '../../../shared/components/cards/de_experience_card.dart';
@@ -27,9 +28,7 @@ class LiveNowSection extends StatelessWidget {
           title: "🔴 Live Right Now",
           subtitle: "Happening now in ${destination.name}.",
           actionText: "Explore →",
-          onAction: () {
-            // Later this will open Explore with Live filter selected.
-          },
+          onAction: () => openExploreFrom(context),
         ),
         const SizedBox(height: 16),
         SizedBox(
