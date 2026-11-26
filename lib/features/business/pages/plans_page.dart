@@ -182,7 +182,12 @@ class _PlanCard extends StatelessWidget {
                 Expanded(
                   child: Text(plan.label, style: Theme.of(context).textTheme.titleMedium),
                 ),
-                if (current) const Chip(label: Text('Your plan')),
+                if (current)
+                  const Flexible(
+                    child: Chip(
+                      label: Text('Your plan', overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
               ],
             ),
             Text(plan.pulsesText),
