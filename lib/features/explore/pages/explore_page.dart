@@ -1,8 +1,13 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../../shared/navigation/de_page_route.dart';
 import '../../../repositories/listing_repository.dart';
+import '../../../models/listing.dart';
+import '../../../repositories/business_pulse_repository.dart';
 import '../../../repositories/featured_repository.dart';
+import '../../../shared/utils/explore_order.dart';
 import '../../../shared/components/cards/de_listing_card.dart';
 import '../../../shared/components/inputs/de_search_bar.dart';
 import '../../../shared/theme/de_colors.dart';
@@ -37,6 +42,8 @@ class ExplorePage extends StatefulWidget {
 }
 
 class _ExplorePageState extends State<ExplorePage> {
+  /// Changes on each visit to Explore, so the order is fresh but then stays put.
+  final int _orderSeed = Random().nextInt(1 << 30);
   String? selectedFilter;
   String? selectedCategory;
   String? selectedAreaId;
@@ -91,10 +98,20 @@ class _ExplorePageState extends State<ExplorePage> {
       areaId: effectiveAreaId,
       category: selectedCategory,
     );
-    // Paid Featured placements come first; everything else keeps its order.
+    // Typing a search keeps the best matches as found. Otherwise results are
+    // shuffled once per visit; paid Featured ones land within the first few
+    // and a live Pulse gives a slight boost.
     final featured = context.watch<FeaturedRepository?>();
-    final listings =
-        featured?.featuredFirst(found, (listing) => listing.id) ?? found;
+    final pulses = context.watch<BusinessPulseRepository?>();
+    final listings = searchQuery.trim().isNotEmpty
+        ? found
+        : exploreOrder<Listing>(
+            found,
+            idOf: (listing) => listing.id,
+            seed: _orderSeed,
+            isPaid: (listing) => featured?.isFeatured(listing.id) ?? false,
+            hasPulse: (listing) => pulses?.forListing(listing.id) != null,
+          );
     final saved = context.watch<SavedRepository?>();
 
     // Category buttons come from the destination's own home rows, so "See all"

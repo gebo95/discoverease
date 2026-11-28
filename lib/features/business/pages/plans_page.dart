@@ -43,7 +43,7 @@ class PlansPage extends StatelessWidget {
                       ? null
                       : () => _go(
                           context,
-                          summary.effectivePlan == BusinessPlanId.free
+                          !summary.hasPaidPlan
                               ? billing.checkoutUrl(
                                   uid: uid,
                                   product: plan.id == BusinessPlanId.plus
@@ -52,7 +52,7 @@ class PlansPage extends StatelessWidget {
                                 )
                               : billing.portalUrl(uid),
                         ),
-                  changesPlan: summary.effectivePlan != BusinessPlanId.free,
+                  changesPlan: summary.hasPaidPlan,
                 ),
               const SizedBox(height: 20),
               Text('Pulse packs', style: Theme.of(context).textTheme.titleLarge),
@@ -76,9 +76,9 @@ class PlansPage extends StatelessWidget {
                   OutlinedButton(
                     onPressed: () => _go(
                       context,
-                      billing.checkoutUrl(uid: uid, product: BillingProduct.pack10),
+                      billing.checkoutUrl(uid: uid, product: BillingProduct.pack15),
                     ),
-                    child: const Text('Add 10 Pulses'),
+                    child: const Text('Add 15 Pulses'),
                   ),
                 ],
               ),
@@ -131,18 +131,25 @@ class PulsesLeftCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final clock = now ?? DateTime.now();
-    final plan = planInfo(summary.effectivePlan);
+    final plan = planInfo(summary.effectivePlanAt(clock));
     final left = summary.pulsesLeft(clock);
+    final unlimited = summary.isUnlimitedAt(clock);
     final packs = summary.packBalance;
     return Card(
       child: ListTile(
         onTap: onTap,
         leading: const Icon(Icons.bolt_rounded),
-        title: Text('${plan.label} plan · $left Pulses left this month'),
+        title: Text(
+          unlimited
+              ? '${plan.label} plan · Unlimited Pulses'
+              : '${plan.label} plan · $left Pulses left this month',
+        ),
         subtitle: Text(
           [
-            plan.pulsesText,
-            if (packs > 0 && !summary.isUnlimited) '$packs from packs',
+            unlimited ? 'Fair use: up to $fairUseMonthlyPulses a month' : plan.pulsesText,
+            if (packs > 0 && !summary.isUnlimitedAt(clock)) '$packs from packs',
+            if (summary.hasGrant(clock) && summary.compUntil != null)
+              'Free until ${_date(summary.compUntil!)}',
             if (summary.cancelAtPeriodEnd && summary.currentPeriodEnd != null)
               'Ends ${_date(summary.currentPeriodEnd!)}',
           ].join(' · '),

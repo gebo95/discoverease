@@ -42,6 +42,34 @@ class FirebaseBillingService {
   Future<Uri> portalUrl(String uid) =>
       _url('createPortalSession', {'businessId': uid});
 
+  /// Admin only: gives a business a plan for some months without Stripe, or
+  /// removes it (plan free or 0 months). Find the business by email or id.
+  Future<String> grantPlan({
+    String? email,
+    String? businessId,
+    required BusinessPlanId plan,
+    required int months,
+  }) async {
+    try {
+      final result = await _functions.httpsCallable('grantPlan').call({
+        'email': ?email,
+        'businessId': ?businessId,
+        'plan': plan.name,
+        'months': months,
+      });
+      final data = Map<String, Object?>.from(result.data as Map);
+      final name = data['name'] as String? ?? 'The business';
+      if (data['until'] == null) return '$name is back on its paid plan.';
+      final until = DateTime.tryParse(data['until'] as String)?.toLocal();
+      final date = until == null
+          ? ''
+          : ' until ${until.year}-${until.month.toString().padLeft(2, '0')}-${until.day.toString().padLeft(2, '0')}';
+      return '$name has ${planInfo(plan).label}$date.';
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(error.message ?? 'Could not change the plan.');
+    }
+  }
+
   Future<Uri> _url(String name, Map<String, Object?> data) async {
     try {
       final result = await _functions.httpsCallable(name).call(data);

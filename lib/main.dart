@@ -24,6 +24,7 @@ import 'services/firebase_unavailability_sync_service.dart';
 import 'services/firebase_admin_review_service.dart';
 import 'repositories/featured_repository.dart';
 import 'services/firebase_billing_service.dart';
+import 'services/firebase_claim_service.dart';
 import 'services/firebase_engagement_service.dart';
 
 Future<void> main() async {
@@ -46,6 +47,7 @@ Future<void> main() async {
           ),
         ),
         Provider(create: (_) => FirebaseBillingService()),
+        Provider(create: (_) => FirebaseClaimService()),
         ChangeNotifierProvider(
           lazy: false,
           create: (_) => FeaturedRepository(source: FeaturedSource().watch()),

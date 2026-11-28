@@ -61,6 +61,30 @@ void main() {
 
   test('product keys match the server names', () {
     expect(BillingProduct.values.map((p) => p.key),
-        ['plus', 'pro', 'pack5', 'pack10', 'featured7', 'featured30']);
+        ['plus', 'pro', 'pack5', 'pack15', 'featured7', 'featured30']);
+  });
+
+  test('a granted plan counts until it ends', () {
+    final grant = BillingSummary(
+      compPlan: BusinessPlanId.plus,
+      compUntil: DateTime.utc(2026, 12, 1),
+    );
+    expect(grant.effectivePlanAt(now), BusinessPlanId.plus);
+    expect(grant.pulsesLeft(now), 15);
+    expect(grant.hasPaidPlan, isFalse);
+    final later = DateTime.utc(2026, 12, 2);
+    expect(grant.effectivePlanAt(later), BusinessPlanId.free);
+    expect(grant.pulsesLeft(later), 3);
+  });
+
+  test('the better of the paid and granted plan wins', () {
+    final both = BillingSummary(
+      plan: BusinessPlanId.plus,
+      status: 'active',
+      compPlan: BusinessPlanId.pro,
+      compUntil: DateTime.utc(2027, 1, 1),
+    );
+    expect(both.effectivePlanAt(now), BusinessPlanId.pro);
+    expect(both.hasPaidPlan, isTrue);
   });
 }

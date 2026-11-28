@@ -22,6 +22,7 @@ import '../../../shared/utils/web_link.dart';
 import '../../../models/business_plan.dart';
 import '../../../services/firebase_billing_service.dart';
 import '../widgets/address_field.dart';
+import 'claim_business_page.dart';
 import 'plans_page.dart';
 import '../widgets/choice_fields.dart';
 import '../widgets/hours_schedule_fields.dart';
@@ -41,25 +42,41 @@ class BusinessPortalPage extends StatelessWidget {
     final businesses = context.read<FirebaseBusinessService>();
     return Scaffold(
       appBar: AppBar(title: const Text('Business portal')),
-      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: businesses.watchBusiness(user.uid),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
+      // A business made by signing up has the account's own id; one that was
+      // claimed keeps its own id, so look up which business this account owns.
+      body: StreamBuilder<String?>(
+        stream: businesses.watchOwnedBusinessId(user.uid),
+        builder: (context, owned) {
+          if (owned.hasError) {
             return const _CenteredMessage(
               'Could not load your business profile. Check your connection and Firestore rules.',
             );
           }
-          if (!snapshot.hasData) {
+          if (owned.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          final document = snapshot.data!;
-          if (!document.exists) {
-            return _BusinessSetupForm(user: user);
-          }
-          final profile = BusinessProfile.fromJson(
-            Map<String, Object?>.from(document.data()!),
+          final businessId = owned.data ?? user.uid;
+          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: businesses.watchBusiness(businessId),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const _CenteredMessage(
+                  'Could not load your business profile. Check your connection and Firestore rules.',
+                );
+              }
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final document = snapshot.data!;
+              if (!document.exists) {
+                return _BusinessSetupForm(user: user);
+              }
+              final profile = BusinessProfile.fromJson(
+                Map<String, Object?>.from(document.data()!),
+              );
+              return _BusinessDashboard(profile: profile, uid: businessId);
+            },
           );
-          return _BusinessDashboard(profile: profile, uid: user.uid);
         },
       ),
     );
@@ -105,6 +122,19 @@ class _BusinessSetupFormState extends State<_BusinessSetupForm> {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.how_to_reg_outlined),
+            title: const Text('Already listed? Claim your business'),
+            subtitle: const Text('We send a code to the contact we have on file.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ClaimBusinessPage()),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         Text('Register your business',
             style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
@@ -1878,11 +1908,15 @@ class _PulseDialogState extends State<_PulseDialog> {
             StreamBuilder<BillingSummary>(
               stream: context.read<FirebaseBillingService>().watch(widget.uid),
               builder: (context, snapshot) {
-                final left = (snapshot.data ?? BillingSummary.empty)
-                    .pulsesLeft(DateTime.now());
+                final summary = snapshot.data ?? BillingSummary.empty;
+                final now = DateTime.now();
+                final uses = summary.isUnlimitedAt(now)
+                    ? 'Your plan has unlimited Pulses.'
+                    : 'A new Pulse uses 1 of your Pulses '
+                          '(${summary.pulsesLeft(now)} left).';
                 return Text(
-                  'A new Pulse uses 1 of your Pulses ($left left). Fixing the '
-                  'words on a live Pulse, keeping the same tag and time, is free.',
+                  '$uses Fixing the words on a live Pulse, keeping the same '
+                  'tag and time, is free.',
                   style: Theme.of(context).textTheme.bodySmall,
                 );
               },

@@ -12,11 +12,23 @@ const { planTransition } = require('./availability_logic');
 const { planPhotoPublish, planSetCover } = require('./photos_logic');
 const { planPulse } = require('./pulse_logic');
 const {
+  cleanText,
+  isPlausibleEmail,
+  maskEmail,
+  maskPhone,
+  planConfirm,
+  planRequest,
+  planRevoke,
+  planSend,
+} = require('./claim_logic');
+const {
   PRODUCTS,
   allowance,
   effectivePlan,
   featuredEnd,
   isFreeEdit,
+  paidPlan,
+  planGrant,
   planPulseUse,
   subscriptionFields,
 } = require('./plans_logic');
@@ -702,7 +714,7 @@ const priceParams = {
   plus: defineString('STRIPE_PRICE_PLUS', { default: '' }),
   pro: defineString('STRIPE_PRICE_PRO', { default: '' }),
   pack5: defineString('STRIPE_PRICE_PACK5', { default: '' }),
-  pack10: defineString('STRIPE_PRICE_PACK10', { default: '' }),
+  pack15: defineString('STRIPE_PRICE_PACK15', { default: '' }),
   featured7: defineString('STRIPE_PRICE_FEATURED7', { default: '' }),
   featured30: defineString('STRIPE_PRICE_FEATURED30', { default: '' }),
 };
@@ -771,7 +783,7 @@ exports.createCheckoutSession = onCall(
       }
       if (definition.plan) {
         const subscription = await transaction.get(db.collection('subscriptions').doc(businessId));
-        if (effectivePlan(subscription.exists ? subscription.data() : undefined) !== 'free') {
+        if (paidPlan(subscription.exists ? subscription.data() : undefined) !== 'free') {
           throw new HttpsError(
             'failed-precondition',
             'You already have a plan. Use Manage billing to change it.',
@@ -842,7 +854,7 @@ async function applySubscription(transaction, businessId, fields) {
   transaction.set(subscriptionRef, update, { merge: true });
   transaction.set(
     db.collection('businesses').doc(businessId),
-    { subscriptionTier: effectivePlan(fields) },
+    { subscriptionTier: paidPlan(fields) },
     { merge: true },
   );
 }
@@ -960,6 +972,426 @@ exports.stripeWebhook = onRequest(
       });
       // A non-2xx reply makes Stripe retry later.
       res.status(500).send('error');
+    }
+  },
+);
+
+// Admin only: give a business a plan without Stripe, for example Plus free for
+// a founding partner's first months. It ends by itself. Find the business by
+// its sign-in email or its id.
+exports.grantPlan = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    requireUid(request);
+    if (request.auth.token?.admin !== true) {
+      throw new HttpsError('permission-denied', 'Only admins can grant plans.');
+    }
+    const { businessId, email, plan, months } = request.data || {};
+    const grant = planGrant({ plan, months, now: new Date() });
+    if (!grant.ok) throw new HttpsError('invalid-argument', grant.message);
+    let id = typeof businessId === 'string' ? businessId.trim() : '';
+    if (!id) {
+      const wanted = typeof email === 'string' ? email.trim() : '';
+      if (!wanted) throw new HttpsError('invalid-argument', 'Enter the business email.');
+      const found = await db.collection('businesses').where('email', '==', wanted).limit(2).get();
+      if (found.size !== 1) {
+        throw new HttpsError(
+          'not-found',
+          found.empty ? 'No business uses that email.' : 'More than one business uses that email.',
+        );
+      }
+      id = found.docs[0].id;
+    }
+    if (!isValidListingId(id)) throw new HttpsError('invalid-argument', 'That is not a business id.');
+    const businessRef = db.collection('businesses').doc(id);
+    const business = await businessRef.get();
+    if (!business.exists) throw new HttpsError('not-found', 'That business does not exist.');
+    const update = grant.clear
+      ? { compPlan: FieldValue.delete(), compUntil: FieldValue.delete() }
+      : { compPlan: grant.plan, compUntil: Timestamp.fromDate(grant.until) };
+    await db.collection('subscriptions').doc(id).set(
+      { ...update, updatedAt: FieldValue.serverTimestamp() },
+      { merge: true },
+    );
+    logger.info('Plan granted.', { businessId: id, plan, months, by: request.auth.uid });
+    return {
+      businessId: id,
+      name: business.data().name || '',
+      plan: grant.clear ? 'free' : grant.plan,
+      until: grant.clear ? null : grant.until.toISOString(),
+    };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Claim your business
+//
+// An admin adds a business with the contact details on file. The owner signs
+// in, finds it, and is sent a one-time code at that contact. Typing the code
+// makes them the owner. Codes are stored hashed, expire, and are rate limited.
+// If the owner cannot get the code they send a request an admin reviews.
+// ---------------------------------------------------------------------------
+
+const resendApiKey = defineSecret('RESEND_API_KEY');
+const claimFromEmail = defineString('CLAIM_FROM_EMAIL', {
+  default: 'DiscoverEase <onboarding@resend.dev>',
+});
+
+function requireAdmin(request) {
+  requireUid(request);
+  if (request.auth.token?.admin !== true) {
+    throw new HttpsError('permission-denied', 'Only admins can do this.');
+  }
+}
+
+const DEFAULT_FROM = 'DiscoverEase <onboarding@resend.dev>';
+const FROM_FORMAT = /^(?:[^<>\r\n"]+ )?<[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>$|^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/;
+
+// Use the configured sender only if it looks like `a@b.c` or `Name <a@b.c>`;
+// quotes or stray spaces from a mistyped setting would make Resend refuse it.
+function senderAddress() {
+  const raw = String(claimFromEmail.value() || '').trim().replace(/^["']|["']$/g, '').trim();
+  if (FROM_FORMAT.test(raw)) return raw;
+  logger.warn('CLAIM_FROM_EMAIL is not a valid sender; using the default.');
+  return DEFAULT_FROM;
+}
+
+async function sendEmail({ to, subject, text }) {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey.value()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ from: senderAddress(), to: [to], subject, text }),
+  });
+  if (!response.ok) {
+    // Keep only the service's own explanation (never our message or the code).
+    let reason = '';
+    try {
+      const body = await response.json();
+      reason = [body?.name, body?.message].filter(Boolean).join(': ').slice(0, 200);
+    } catch (_) {
+      // No readable reason; the status code still tells most of the story.
+    }
+    throw new Error(`Email service replied ${response.status}${reason ? ` (${reason})` : ''}`);
+  }
+}
+
+// Makes [uid] the owner of an unclaimed business. Runs inside a transaction.
+async function giveOwnership(transaction, { businessId, uid }) {
+  const owned = await transaction.get(
+    db.collection('businesses').where('ownerUid', '==', uid).limit(1),
+  );
+  if (!owned.empty) {
+    throw new HttpsError('failed-precondition', 'This account already manages a business.');
+  }
+  transaction.update(db.collection('businesses').doc(businessId), {
+    ownerUid: uid,
+    claimStatus: 'claimed',
+    claimedAt: FieldValue.serverTimestamp(),
+  });
+  transaction.delete(db.collection('claimable').doc(businessId));
+  transaction.delete(db.collection('claim_codes').doc(businessId));
+}
+
+exports.createClaimableBusiness = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    requireAdmin(request);
+    const data = request.data || {};
+    const name = cleanText(data.name, 100);
+    const email = cleanText(data.email, 254);
+    const phone = cleanText(data.phone, 40);
+    const category = cleanText(data.category, 60);
+    const destinationId = cleanText(data.destinationId, 60);
+    if (!name) throw new HttpsError('invalid-argument', 'Enter the business name.');
+    if (!isPlausibleEmail(email)) {
+      throw new HttpsError('invalid-argument', 'Enter a valid contact email.');
+    }
+    const ref = db.collection('businesses').doc();
+    const batch = db.batch();
+    batch.set(ref, {
+      schemaVersion: 1,
+      id: ref.id,
+      ownerUid: '',
+      name,
+      email,
+      phone,
+      website: '',
+      instagram: '',
+      status: 'approved',
+      verified: false,
+      subscriptionTier: 'free',
+      claimStatus: 'unclaimed',
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    batch.set(db.collection('claimable').doc(ref.id), {
+      name,
+      category,
+      destinationId,
+      emailHint: maskEmail(email),
+      phoneHint: maskPhone(phone),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    return { businessId: ref.id };
+  },
+);
+
+exports.requestClaimCode = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true, secrets: [resendApiKey] },
+  async (request) => {
+    const uid = requireUid(request);
+    const businessId = cleanText(request.data?.businessId, 128);
+    if (!isValidListingId(businessId)) {
+      throw new HttpsError('invalid-argument', 'Choose a business to claim.');
+    }
+    const businessRef = db.collection('businesses').doc(businessId);
+    const pendingRef = db.collection('claim_codes').doc(businessId);
+    const limitsRef = db.collection('claim_limits').doc(uid);
+    let outcome;
+    try {
+      outcome = await db.runTransaction(async (transaction) => {
+        const [business, pending, limits, owned] = await Promise.all([
+          transaction.get(businessRef),
+          transaction.get(pendingRef),
+          transaction.get(limitsRef),
+          transaction.get(db.collection('businesses').where('ownerUid', '==', uid).limit(1)),
+        ]);
+        if (!owned.empty) {
+          throw new HttpsError('failed-precondition', 'This account already manages a business.');
+        }
+        const plan = planSend({
+          business: business.exists ? business.data() : undefined,
+          userId: uid,
+          pending: pending.exists ? pending.data() : undefined,
+          userSends: limits.exists ? limits.data().sends : [],
+          now: new Date(),
+        });
+        if (!plan.ok) throw new HttpsError(plan.code, plan.message);
+        transaction.set(pendingRef, {
+          ...plan.pending,
+          expiresAt: Timestamp.fromDate(plan.pending.expiresAt),
+        });
+        transaction.set(limitsRef, { sends: plan.userSends }, { merge: true });
+        return {
+          code: plan.code,
+          email: plan.email,
+          name: business.data().name || 'your business',
+        };
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to prepare a claim code.', { businessId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not send a code. Try again.');
+    }
+    try {
+      await sendEmail({
+        to: outcome.email,
+        subject: 'Your DiscoverEase verification code',
+        text:
+          `Someone asked to manage "${outcome.name}" on DiscoverEase.\n\n` +
+          `Your code is ${outcome.code}. It works for 15 minutes.\n\n` +
+          'If this was not you, ignore this email. Nobody can take over the ' +
+          'business without this code.',
+      });
+    } catch (error) {
+      // Never log the code itself.
+      logger.error('Failed to email a claim code.', { businessId, error: error?.message });
+      throw new HttpsError('unavailable', 'We could not send the email. Try again soon.');
+    }
+    return { sentTo: maskEmail(outcome.email) };
+  },
+);
+
+exports.confirmClaimCode = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    const uid = requireUid(request);
+    const businessId = cleanText(request.data?.businessId, 128);
+    const code = typeof request.data?.code === 'string' ? request.data.code : '';
+    if (!isValidListingId(businessId)) {
+      throw new HttpsError('invalid-argument', 'Choose a business to claim.');
+    }
+    const businessRef = db.collection('businesses').doc(businessId);
+    const pendingRef = db.collection('claim_codes').doc(businessId);
+    let result;
+    try {
+      result = await db.runTransaction(async (transaction) => {
+        const [business, pending] = await Promise.all([
+          transaction.get(businessRef),
+          transaction.get(pendingRef),
+        ]);
+        if (!business.exists || business.data().claimStatus !== 'unclaimed') {
+          throw new HttpsError('failed-precondition', 'This business has already been claimed.');
+        }
+        const check = planConfirm({
+          pending: pending.exists ? pending.data() : undefined,
+          userId: uid,
+          code,
+          now: new Date(),
+        });
+        if (!check.ok) {
+          // A wrong guess must still be counted, so do not roll it back.
+          if (check.wrong) transaction.update(pendingRef, { attempts: FieldValue.increment(1) });
+          return check;
+        }
+        await giveOwnership(transaction, { businessId, uid });
+        return { ok: true };
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to confirm a claim code.', { businessId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not check the code. Try again.');
+    }
+    if (!result.ok) throw new HttpsError(result.code, result.message);
+    logger.info('Business claimed.', { businessId, uid });
+    return { claimed: true };
+  },
+);
+
+exports.submitClaimRequest = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    const uid = requireUid(request);
+    const businessId = cleanText(request.data?.businessId, 128);
+    const contact = cleanText(request.data?.contact, 120);
+    const note = cleanText(request.data?.note, 500);
+    if (!isValidListingId(businessId)) {
+      throw new HttpsError('invalid-argument', 'Choose a business to claim.');
+    }
+    if (!contact) {
+      throw new HttpsError('invalid-argument', 'Enter an email or phone number we can reach you at.');
+    }
+    const limitsRef = db.collection('claim_limits').doc(uid);
+    try {
+      await db.runTransaction(async (transaction) => {
+        const [business, limits] = await Promise.all([
+          transaction.get(db.collection('businesses').doc(businessId)),
+          transaction.get(limitsRef),
+        ]);
+        const plan = planRequest({
+          business: business.exists ? business.data() : undefined,
+          recentRequests: limits.exists ? limits.data().requests : [],
+          now: new Date(),
+        });
+        if (!plan.ok) throw new HttpsError(plan.code, plan.message);
+        transaction.set(limitsRef, { requests: plan.requests }, { merge: true });
+        transaction.set(db.collection('claim_requests').doc(), {
+          businessId,
+          businessName: business.data().name || '',
+          uid,
+          accountEmail: request.auth.token?.email || '',
+          contact,
+          note,
+          status: 'pending',
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      });
+      return { submitted: true };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to save a claim request.', { businessId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not send your request. Try again.');
+    }
+  },
+);
+
+exports.reviewClaimRequest = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    requireAdmin(request);
+    const requestId = cleanText(request.data?.requestId, 128);
+    const approve = request.data?.approve === true;
+    const note = cleanText(request.data?.note, 300);
+    if (!requestId) throw new HttpsError('invalid-argument', 'Choose a request.');
+    const requestRef = db.collection('claim_requests').doc(requestId);
+    try {
+      await db.runTransaction(async (transaction) => {
+        const claim = await transaction.get(requestRef);
+        if (!claim.exists || claim.data().status !== 'pending') {
+          throw new HttpsError('failed-precondition', 'This request was already handled.');
+        }
+        if (approve) {
+          const business = await transaction.get(
+            db.collection('businesses').doc(claim.data().businessId),
+          );
+          if (!business.exists || business.data().claimStatus !== 'unclaimed') {
+            throw new HttpsError('failed-precondition', 'This business has already been claimed.');
+          }
+          await giveOwnership(transaction, {
+            businessId: claim.data().businessId,
+            uid: claim.data().uid,
+          });
+        }
+        transaction.update(requestRef, {
+          status: approve ? 'approved' : 'rejected',
+          reviewNote: note,
+          reviewedBy: request.auth.uid,
+          reviewedAt: FieldValue.serverTimestamp(),
+        });
+      });
+      return { status: approve ? 'approved' : 'rejected' };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to review a claim request.', { requestId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not save the decision.');
+    }
+  },
+);
+
+// Admin only: take a claimed business back from its owner. The owner loses
+// access at once (every rule checks the business record), the business can be
+// claimed again, its live Pulses end, and the change is written to a log.
+exports.revokeOwnership = onCall(
+  { cors: true, invoker: 'public', enforceAppCheck: true },
+  async (request) => {
+    requireAdmin(request);
+    const businessId = cleanText(request.data?.businessId, 128);
+    const reason = cleanText(request.data?.reason, 300);
+    if (!isValidListingId(businessId)) {
+      throw new HttpsError('invalid-argument', 'Choose a business.');
+    }
+    const businessRef = db.collection('businesses').doc(businessId);
+    try {
+      await db.runTransaction(async (transaction) => {
+        const [business, pulses] = await Promise.all([
+          transaction.get(businessRef),
+          transaction.get(db.collection('pulses').where('businessId', '==', businessId).limit(100)),
+        ]);
+        const plan = planRevoke({ business: business.exists ? business.data() : undefined });
+        if (!plan.ok) throw new HttpsError(plan.code, plan.message);
+        transaction.update(businessRef, {
+          ownerUid: '',
+          claimStatus: 'unclaimed',
+          claimedAt: FieldValue.delete(),
+          revokedAt: FieldValue.serverTimestamp(),
+        });
+        transaction.set(db.collection('claimable').doc(businessId), {
+          ...plan.claimable,
+          category: '',
+          destinationId: '',
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.delete(db.collection('claim_codes').doc(businessId));
+        for (const pulse of pulses.docs) transaction.delete(pulse.ref);
+        transaction.set(db.collection('ownership_log').doc(), {
+          businessId,
+          businessName: plan.claimable.name,
+          action: 'revoke',
+          previousOwnerUid: plan.previousOwnerUid,
+          reason,
+          by: request.auth.uid,
+          at: FieldValue.serverTimestamp(),
+        });
+      });
+      logger.info('Ownership revoked.', { businessId, by: request.auth.uid });
+      return { revoked: true };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logger.error('Failed to revoke ownership.', { businessId, error: error?.stack || String(error) });
+      throw new HttpsError('internal', 'Could not take the business back. Try again.');
     }
   },
 );

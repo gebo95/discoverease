@@ -67,3 +67,10 @@ Built: plans, Pulse allowance, Pulse packs, Featured placement, Stripe
 checkout/portal/webhook. See docs/16_Subscriptions_V1.md. Not yet: Verified
 badge display, analytics preview, Pro priority beyond Featured sorting, Apple /
 Google in-app billing for a phone build.
+
+## Claim your business status
+
+Email-code claiming, help requests and admin review are built (see
+docs/18_Claim_Business_V1.md). Next: SMS/WhatsApp codes, then the Claim and
+ownership admin tools (update contact, revoke ownership, audit log, notify the
+old contact).

@@ -794,3 +794,121 @@ test('an owner cannot give themselves a paid tier on their business record', asy
   await seed(async (db) => setDoc(doc(db, 'businesses/biz-1'), businessDoc('biz-1')));
   await assertFails(updateDoc(doc(asUser('biz-1'), 'businesses/biz-1'), { subscriptionTier: 'pro' }));
 });
+
+// ------------------------------------------------------ claim your business
+
+const shell = (overrides = {}) =>
+  businessDoc('shell-1', {
+    id: 'shell-1',
+    ownerUid: '',
+    status: 'approved',
+    claimStatus: 'unclaimed',
+    ...overrides,
+  });
+
+test('claimable listings are readable when signed in and never writable', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'claimable/shell-1'), { name: 'Cafe', emailHint: 'ow***@cafe.com' }),
+  );
+  await assertSucceeds(getDoc(doc(asUser('u1'), 'claimable/shell-1')));
+  await assertSucceeds(getDocs(collection(asUser('u1'), 'claimable')));
+  await assertFails(getDoc(doc(signedOut(), 'claimable/shell-1')));
+  await assertFails(setDoc(doc(asUser('u1'), 'claimable/shell-2'), { name: 'Fake' }));
+  await assertFails(setDoc(doc(asAdmin(), 'claimable/shell-2'), { name: 'Fake' }));
+  await assertFails(deleteDoc(doc(asUser('u1'), 'claimable/shell-1')));
+});
+
+test('claim codes and send limits are closed to every app', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'claim_codes/shell-1'), { uid: 'u1', codeHash: 'x' });
+    await setDoc(doc(db, 'claim_limits/u1'), { sends: [] });
+  });
+  for (const db of [asUser('u1'), asAdmin(), signedOut()]) {
+    await assertFails(getDoc(doc(db, 'claim_codes/shell-1')));
+    await assertFails(setDoc(doc(db, 'claim_codes/shell-1'), { uid: 'u1', codeHash: 'y', attempts: 0 }));
+    await assertFails(getDoc(doc(db, 'claim_limits/u1')));
+    await assertFails(setDoc(doc(db, 'claim_limits/u1'), { sends: [] }));
+  }
+});
+
+test('only admins can read claim requests, and nobody can write them', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'claim_requests/r1'), { businessId: 'shell-1', uid: 'u1', status: 'pending' }),
+  );
+  await assertSucceeds(getDoc(doc(asAdmin(), 'claim_requests/r1')));
+  await assertSucceeds(getDocs(collection(asAdmin(), 'claim_requests')));
+  await assertFails(getDoc(doc(asUser('u1'), 'claim_requests/r1')));
+  await assertFails(setDoc(doc(asUser('u1'), 'claim_requests/r2'), { businessId: 'shell-1', uid: 'u1' }));
+  await assertFails(updateDoc(doc(asAdmin(), 'claim_requests/r1'), { status: 'approved' }));
+});
+
+test('an unclaimed business is private and nobody can act as its owner', async () => {
+  await seed(async (db) => setDoc(doc(db, 'businesses/shell-1'), shell()));
+  await assertFails(getDoc(doc(asUser('u1'), 'businesses/shell-1')));
+  await assertFails(updateDoc(doc(asUser('u1'), 'businesses/shell-1'), { name: 'Mine now' }));
+  await assertFails(
+    setDoc(doc(asUser('u1'), 'businesses/shell-1/experiences/e1'), experienceDoc('e1')),
+  );
+  await assertFails(updateDoc(doc(asUser('u1'), 'businesses/shell-1'), { ownerUid: 'u1' }));
+});
+
+test('after a claim, the owner works under the business id, not their own uid', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'businesses/shell-1'), shell({ ownerUid: 'u1', claimStatus: 'claimed', claimedAt: now() })),
+  );
+  const owner = asUser('u1');
+  await assertSucceeds(getDoc(doc(owner, 'businesses/shell-1')));
+  await assertSucceeds(
+    getDocs(query(collection(owner, 'businesses'), where('ownerUid', '==', 'u1'))),
+  );
+  await assertSucceeds(updateDoc(doc(owner, 'businesses/shell-1'), { name: 'New name' }));
+  await assertSucceeds(
+    setDoc(doc(owner, 'businesses/shell-1/experiences/e1'), experienceDoc('e1')),
+  );
+  await assertSucceeds(getDoc(doc(owner, 'subscriptions/shell-1')));
+  // Another person still cannot.
+  await assertFails(getDoc(doc(asUser('u2'), 'businesses/shell-1')));
+  await assertFails(updateDoc(doc(asUser('u2'), 'businesses/shell-1'), { name: 'Hijack' }));
+});
+
+test('an owner cannot change claim fields or hand the business to someone else', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'businesses/shell-1'), shell({ ownerUid: 'u1', claimStatus: 'claimed', claimedAt: now() })),
+  );
+  const ref = doc(asUser('u1'), 'businesses/shell-1');
+  await assertFails(updateDoc(ref, { claimStatus: 'unclaimed' }));
+  await assertFails(updateDoc(ref, { claimedAt: now() }));
+  await assertFails(updateDoc(ref, { ownerUid: 'u2' }));
+});
+
+test('nobody can list other businesses by guessing an owner id', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'businesses/shell-1'), shell({ ownerUid: 'u1', claimStatus: 'claimed' })),
+  );
+  await assertFails(
+    getDocs(query(collection(asUser('u2'), 'businesses'), where('ownerUid', '==', 'u1'))),
+  );
+});
+
+test('the ownership log is readable by admins only and never written by an app', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'ownership_log/l1'), { businessId: 'shell-1', action: 'revoke' }),
+  );
+  await assertSucceeds(getDoc(doc(asAdmin(), 'ownership_log/l1')));
+  await assertSucceeds(getDocs(collection(asAdmin(), 'ownership_log')));
+  await assertFails(getDoc(doc(asUser('u1'), 'ownership_log/l1')));
+  await assertFails(setDoc(doc(asAdmin(), 'ownership_log/l2'), { businessId: 'shell-1' }));
+});
+
+test('a business taken back loses its owner at once', async () => {
+  await seed(async (db) =>
+    setDoc(doc(db, 'businesses/shell-1'), shell({ ownerUid: 'u1', claimStatus: 'claimed' })),
+  );
+  await assertSucceeds(updateDoc(doc(asUser('u1'), 'businesses/shell-1'), { name: 'Mine' }));
+  await seed(async (db) =>
+    setDoc(doc(db, 'businesses/shell-1'), shell({ ownerUid: '', claimStatus: 'unclaimed', revokedAt: now() })),
+  );
+  await assertFails(updateDoc(doc(asUser('u1'), 'businesses/shell-1'), { name: 'Still mine' }));
+  await assertFails(getDoc(doc(asUser('u1'), 'businesses/shell-1')));
+  await assertFails(setDoc(doc(asUser('u1'), 'businesses/shell-1/experiences/e9'), experienceDoc('e9')));
+});

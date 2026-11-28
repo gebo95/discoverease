@@ -117,6 +117,16 @@ class FirebaseBusinessService {
   DocumentReference<Map<String, dynamic>> _business(String uid) =>
       _firestore.collection('businesses').doc(uid);
 
+  /// The id of the business this account owns, or null if it has none yet.
+  /// A business made by signing up has the account's own id; one that was
+  /// claimed keeps the id it was given, so the id is looked up, not assumed.
+  Stream<String?> watchOwnedBusinessId(String uid) => _firestore
+      .collection('businesses')
+      .where('ownerUid', isEqualTo: uid)
+      .limit(1)
+      .snapshots()
+      .map((snapshot) => snapshot.docs.isEmpty ? null : snapshot.docs.first.id);
+
   Stream<DocumentSnapshot<Map<String, dynamic>>> watchBusiness(String uid) =>
       _business(uid).snapshots();
 

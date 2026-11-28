@@ -6,6 +6,8 @@ import '../../../models/business_profile.dart';
 import '../../../services/experience_photo_service.dart';
 import '../../../services/firebase_admin_review_service.dart';
 import '../../../shared/utils/photo_files.dart';
+import 'admin_claims_page.dart';
+import 'admin_plans_page.dart';
 
 class AdminReviewPage extends StatefulWidget {
   const AdminReviewPage({super.key});
@@ -28,7 +30,27 @@ class _AdminReviewPageState extends State<AdminReviewPage> {
   Widget build(BuildContext context) {
     final review = context.read<FirebaseAdminReviewService>();
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin review')),
+      appBar: AppBar(
+        title: const Text('Admin review'),
+        actions: [
+          IconButton(
+            tooltip: 'Claims',
+            icon: const Icon(Icons.how_to_reg_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdminClaimsPage()),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Business plans',
+            icon: const Icon(Icons.workspace_premium_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdminPlansPage()),
+            ),
+          ),
+        ],
+      ),
       body: FutureBuilder<bool>(
         future: _authorized,
         builder: (context, authorization) {

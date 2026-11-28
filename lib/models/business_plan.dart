@@ -35,7 +35,7 @@ const List<BusinessPlanInfo> businessPlans = [
     id: BusinessPlanId.plus,
     label: 'Plus',
     monthlyPulses: 15,
-    perks: ['Verified badge', 'More Pulses for busy weeks'],
+    perks: ['More Pulses for busy weeks', 'Basic stats'],
   ),
   BusinessPlanInfo(
     id: BusinessPlanId.pro,
@@ -53,7 +53,7 @@ enum BillingProduct {
   plus('plus'),
   pro('pro'),
   pack5('pack5'),
-  pack10('pack10'),
+  pack15('pack15'),
   featured7('featured7'),
   featured30('featured30');
 
@@ -72,6 +72,8 @@ class BillingSummary {
     this.pulseMonth = '',
     this.pulsesUsed = 0,
     this.packBalance = 0,
+    this.compPlan = BusinessPlanId.free,
+    this.compUntil,
   });
 
   final BusinessPlanId plan;
@@ -82,29 +84,39 @@ class BillingSummary {
   final int pulsesUsed;
   final int packBalance;
 
+  /// A plan the team granted, such as a founding partner's free months. It
+  /// counts until [compUntil] and then stops by itself.
+  final BusinessPlanId compPlan;
+  final DateTime? compUntil;
+
   static const empty = BillingSummary();
 
   static const _entitled = {'active', 'trialing', 'past_due'};
 
-  static BillingSummary fromJson(Map<String, Object?> json) {
-    BusinessPlanId plan = BusinessPlanId.free;
-    for (final value in BusinessPlanId.values) {
-      if (value.name == json['plan']) plan = value;
+  static BusinessPlanId _planFrom(Object? value) {
+    for (final id in BusinessPlanId.values) {
+      if (id.name == value) return id;
     }
+    return BusinessPlanId.free;
+  }
+
+  static BillingSummary fromJson(Map<String, Object?> json) {
     int count(Object? value) => value is int && value > 0 ? value : 0;
-    final end = json['currentPeriodEnd'];
     return BillingSummary(
-      plan: plan,
+      plan: _planFrom(json['plan']),
       status: json['status'] as String? ?? '',
       cancelAtPeriodEnd: json['cancelAtPeriodEnd'] == true,
-      currentPeriodEnd: end is DateTime ? end : _toDate(end),
+      currentPeriodEnd: _toDate(json['currentPeriodEnd']),
       pulseMonth: json['pulseMonth'] as String? ?? '',
       pulsesUsed: count(json['pulsesUsed']),
       packBalance: count(json['packBalance']),
+      compPlan: _planFrom(json['compPlan']),
+      compUntil: _toDate(json['compUntil']),
     );
   }
 
   static DateTime? _toDate(Object? value) {
+    if (value is DateTime) return value;
     // Firestore timestamps expose toDate(); kept dynamic so this model stays
     // free of Firebase imports.
     try {
@@ -115,11 +127,28 @@ class BillingSummary {
     }
   }
 
-  /// The plan the business actually gets: a lapsed paid plan counts as Free.
-  BusinessPlanId get effectivePlan =>
+  BusinessPlanId get _paidPlan =>
       plan != BusinessPlanId.free && _entitled.contains(status)
       ? plan
       : BusinessPlanId.free;
+
+  /// Whether the business pays for a plan, as opposed to being granted one.
+  bool get hasPaidPlan => _paidPlan != BusinessPlanId.free;
+
+  /// Whether a granted plan is still running at [now].
+  bool hasGrant(DateTime now) =>
+      compPlan != BusinessPlanId.free &&
+      compUntil != null &&
+      compUntil!.isAfter(now);
+
+  /// The plan the business actually gets: the better of what it pays for and
+  /// what it was granted. A lapsed paid plan counts as Free.
+  BusinessPlanId effectivePlanAt(DateTime now) {
+    final granted = hasGrant(now) ? compPlan : BusinessPlanId.free;
+    return granted.index > _paidPlan.index ? granted : _paidPlan;
+  }
+
+  BusinessPlanId get effectivePlan => effectivePlanAt(DateTime.now());
 
   static String monthKey(DateTime now) {
     final utc = now.toUtc();
@@ -129,15 +158,19 @@ class BillingSummary {
   int usedThisMonth(DateTime now) =>
       pulseMonth == monthKey(now) ? pulsesUsed : 0;
 
-  bool get isUnlimited => planInfo(effectivePlan).monthlyPulses == null;
+  bool isUnlimitedAt(DateTime now) =>
+      planInfo(effectivePlanAt(now)).monthlyPulses == null;
 
-  int monthlyLimit() =>
-      planInfo(effectivePlan).monthlyPulses ?? fairUseMonthlyPulses;
+  bool get isUnlimited => isUnlimitedAt(DateTime.now());
+
+  int monthlyLimit([DateTime? now]) =>
+      planInfo(effectivePlanAt(now ?? DateTime.now())).monthlyPulses ??
+      fairUseMonthlyPulses;
 
   /// Pulses that can still be posted: the plan's own first, then packs
   /// (packs do not apply on an unlimited plan).
   int pulsesLeft(DateTime now) {
-    final included = (monthlyLimit() - usedThisMonth(now)).clamp(0, 1 << 30);
-    return isUnlimited ? included : included + packBalance;
+    final included = (monthlyLimit(now) - usedThisMonth(now)).clamp(0, 1 << 30);
+    return isUnlimitedAt(now) ? included : included + packBalance;
   }
 }

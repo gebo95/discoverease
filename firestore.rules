@@ -189,10 +189,17 @@ service cloud.firestore {
             == resource.data.get('reviewedAt', null)
           && request.resource.data.get('reviewedBy', null)
             == resource.data.get('reviewedBy', null)
+          && request.resource.data.get('claimStatus', null)
+            == resource.data.get('claimStatus', null)
+          && request.resource.data.get('claimedAt', null)
+            == resource.data.get('claimedAt', null)
+          && request.resource.data.get('revokedAt', null)
+            == resource.data.get('revokedAt', null)
           && request.resource.data.keys().hasOnly([
             'schemaVersion', 'id', 'ownerUid', 'name', 'email', 'phone',
             'website', 'instagram', 'status', 'verified', 'subscriptionTier',
-            'createdAt', 'reviewedAt', 'reviewedBy'
+            'createdAt', 'reviewedAt', 'reviewedBy', 'claimStatus', 'claimedAt',
+            'revokedAt'
           ])
           && validBusinessName(request.resource.data.name));
       // Once a business is published, only an admin may delete its parent.
@@ -324,6 +331,33 @@ service cloud.firestore {
     }
     match /stripe_events/{eventId} {
       allow read, write: if false;
+    }
+
+    // Businesses waiting to be claimed. Public so an owner can find theirs; it
+    // holds only the name and a masked hint of the contact, never the contact.
+    // Written only by Cloud Functions.
+    match /claimable/{businessId} {
+      allow get, list: if signedIn();
+      allow write: if false;
+    }
+
+    // Claim codes (hashed), send limits and help requests: server only, except
+    // that admins can read the requests to review them.
+    match /claim_codes/{businessId} {
+      allow read, write: if false;
+    }
+    match /claim_limits/{uid} {
+      allow read, write: if false;
+    }
+    // A record of ownership changes made by admins. Admins can read it; only
+    // Cloud Functions write it.
+    match /ownership_log/{entryId} {
+      allow get, list: if isAdmin();
+      allow write: if false;
+    }
+    match /claim_requests/{requestId} {
+      allow get, list: if isAdmin();
+      allow write: if false;
     }
 
     match /catalog/{experienceId} {

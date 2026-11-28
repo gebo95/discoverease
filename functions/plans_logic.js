@@ -7,9 +7,9 @@ const PLAN_IDS = ['free', 'plus', 'pro'];
 
 // `monthlyPulses: null` means unlimited, held back only by the fair-use cap.
 const PLANS = {
-  free: { label: 'Free', monthlyPulses: 3, verified: false },
-  plus: { label: 'Plus', monthlyPulses: 15, verified: true },
-  pro: { label: 'Pro', monthlyPulses: null, verified: true },
+  free: { label: 'Free', monthlyPulses: 3 },
+  plus: { label: 'Plus', monthlyPulses: 15 },
+  pro: { label: 'Pro', monthlyPulses: null },
 };
 
 const FAIR_USE_MONTHLY_CAP = 300;
@@ -20,7 +20,7 @@ const PRODUCTS = {
   plus: { mode: 'subscription', plan: 'plus' },
   pro: { mode: 'subscription', plan: 'pro' },
   pack5: { mode: 'payment', pulses: 5 },
-  pack10: { mode: 'payment', pulses: 10 },
+  pack15: { mode: 'payment', pulses: 15 },
   featured7: { mode: 'payment', featuredDays: 7 },
   featured30: { mode: 'payment', featuredDays: 30 },
 };
@@ -33,13 +33,52 @@ function monthKey(now) {
   return `${now.getUTCFullYear()}-${m}`;
 }
 
-// The plan a business actually gets right now: a lapsed or unknown plan falls
-// back to Free.
-function effectivePlan(subscription) {
+// The plan a business pays for: a lapsed or unknown plan falls back to Free.
+function paidPlan(subscription) {
   const plan = subscription?.plan;
   if (!PLAN_IDS.includes(plan) || plan === 'free') return 'free';
   if (!ENTITLED_STATUSES.includes(subscription?.status)) return 'free';
   return plan;
+}
+
+function toDate(value) {
+  if (!value) return null;
+  if (typeof value.toDate === 'function') return value.toDate();
+  return value instanceof Date ? value : null;
+}
+
+// A plan granted by the team (for example a founding partner's free months).
+// It counts until `compUntil`, then stops by itself.
+function compPlan(subscription, now) {
+  const plan = subscription?.compPlan;
+  if (!PLAN_IDS.includes(plan) || plan === 'free') return 'free';
+  const until = toDate(subscription?.compUntil);
+  return until && until.getTime() > now.getTime() ? plan : 'free';
+}
+
+// The plan a business actually gets right now: the better of what it pays for
+// and what it was granted.
+function effectivePlan(subscription, now = new Date()) {
+  const paid = paidPlan(subscription);
+  const granted = compPlan(subscription, now);
+  return PLAN_IDS.indexOf(granted) > PLAN_IDS.indexOf(paid) ? granted : paid;
+}
+
+const MAX_GRANT_MONTHS = 24;
+
+// Works out a grant: `free` or 0 months removes it. Returns the fields to
+// store, or an error.
+function planGrant({ plan, months, now }) {
+  if (!PLAN_IDS.includes(plan)) {
+    return { ok: false, message: 'Choose Plus, Pro or Remove.' };
+  }
+  if (plan === 'free' || months === 0) return { ok: true, clear: true };
+  if (!Number.isInteger(months) || months < 1 || months > MAX_GRANT_MONTHS) {
+    return { ok: false, message: `Choose 1 to ${MAX_GRANT_MONTHS} months.` };
+  }
+  const until = new Date(now.getTime());
+  until.setUTCMonth(until.getUTCMonth() + months);
+  return { ok: true, clear: false, plan, until };
 }
 
 function nonNegativeInt(value) {
@@ -49,7 +88,7 @@ function nonNegativeInt(value) {
 // What the business has left this month. Usage from an earlier month counts
 // as zero, so nothing needs a scheduled reset.
 function allowance(subscription, now) {
-  const plan = effectivePlan(subscription);
+  const plan = effectivePlan(subscription, now);
   const sameMonth = subscription?.pulseMonth === monthKey(now);
   const used = sameMonth ? nonNegativeInt(subscription?.pulsesUsed) : 0;
   const packBalance = nonNegativeInt(subscription?.packBalance);
@@ -105,7 +144,7 @@ function planPulseUse({ subscription, freeEdit, now }) {
 }
 
 // Maps a Stripe price id back to one of our products, using the configured
-// ids: { plus, pro, pack5, pack10, featured7, featured30 }.
+// ids: { plus, pro, pack5, pack15, featured7, featured30 }.
 function productForPrice(priceId, prices) {
   const key = Object.keys(PRODUCTS).find((k) => prices[k] && prices[k] === priceId);
   return key ? { key, ...PRODUCTS[key] } : null;
@@ -138,11 +177,15 @@ module.exports = {
   PLANS,
   PLAN_IDS,
   PRODUCTS,
+  MAX_GRANT_MONTHS,
   allowance,
+  compPlan,
   effectivePlan,
   featuredEnd,
   isFreeEdit,
   monthKey,
+  paidPlan,
+  planGrant,
   planPulseUse,
   productForPrice,
   subscriptionFields,

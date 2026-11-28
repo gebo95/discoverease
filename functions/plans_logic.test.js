@@ -5,6 +5,9 @@ const {
   allowance,
   effectivePlan,
   featuredEnd,
+  compPlan,
+  paidPlan,
+  planGrant,
   isFreeEdit,
   monthKey,
   planPulseUse,
@@ -13,7 +16,7 @@ const {
 } = require('./plans_logic');
 
 const now = new Date('2026-11-21T12:00:00Z');
-const ts = (d) => ({ toMillis: () => d.getTime() });
+const ts = (d) => ({ toMillis: () => d.getTime(), toDate: () => d });
 
 test('monthKey uses the UTC month', () => {
   assert.equal(monthKey(new Date('2026-01-31T23:30:00Z')), '2026-01');
@@ -168,4 +171,35 @@ test('Featured placement stacks onto the time left', () => {
     featuredEnd({ currentEnd: new Date('2026-11-01T00:00:00Z'), days: 7, now }).toISOString(),
     '2026-11-28T12:00:00.000Z',
   );
+});
+
+test('a granted plan counts until it ends, then stops by itself', () => {
+  const sub = { compPlan: 'plus', compUntil: ts(new Date('2026-12-01T00:00:00Z')) };
+  assert.equal(effectivePlan(sub, now), 'plus');
+  assert.equal(compPlan(sub, new Date('2026-12-02T00:00:00Z')), 'free');
+  assert.equal(effectivePlan(sub, new Date('2026-12-02T00:00:00Z')), 'free');
+});
+
+test('the better of the paid and granted plan wins', () => {
+  const until = ts(new Date('2027-01-01T00:00:00Z'));
+  assert.equal(effectivePlan({ plan: 'plus', status: 'active', compPlan: 'pro', compUntil: until }, now), 'pro');
+  assert.equal(effectivePlan({ plan: 'pro', status: 'active', compPlan: 'plus', compUntil: until }, now), 'pro');
+  assert.equal(paidPlan({ plan: 'pro', status: 'canceled', compPlan: 'plus', compUntil: until }), 'free');
+  assert.equal(effectivePlan({ plan: 'pro', status: 'canceled', compPlan: 'plus', compUntil: until }, now), 'plus');
+});
+
+test('a granted Plus plan gives 15 Pulses', () => {
+  const sub = { compPlan: 'plus', compUntil: ts(new Date('2027-01-01T00:00:00Z')) };
+  assert.equal(allowance(sub, now).limit, 15);
+});
+
+test('a grant needs a valid plan and 1 to 24 months', () => {
+  const g = planGrant({ plan: 'plus', months: 6, now });
+  assert.equal(g.ok, true);
+  assert.equal(g.until.toISOString(), '2027-05-21T12:00:00.000Z');
+  assert.equal(planGrant({ plan: 'gold', months: 6, now }).ok, false);
+  assert.equal(planGrant({ plan: 'plus', months: 25, now }).ok, false);
+  assert.equal(planGrant({ plan: 'plus', months: 1.5, now }).ok, false);
+  assert.equal(planGrant({ plan: 'free', months: 6, now }).clear, true);
+  assert.equal(planGrant({ plan: 'plus', months: 0, now }).clear, true);
 });
